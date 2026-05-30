@@ -1,0 +1,168 @@
+{{ header }}{{ column_left }}
+<div id="content">
+  <div class="page-header">
+    <div class="container-fluid">
+      <div class="float-end">
+        <button type="submit" form="form-paymos" data-bs-toggle="tooltip" title="{{ button_save }}" class="btn btn-primary"><i class="fa-solid fa-save"></i></button>
+        <button type="button" id="button-paymos-reconcile" data-bs-toggle="tooltip" title="{{ button_reconcile }}" class="btn btn-info"><i class="fa-solid fa-rotate"></i></button>
+        <a href="{{ back }}" data-bs-toggle="tooltip" title="{{ button_back }}" class="btn btn-light"><i class="fa-solid fa-reply"></i></a>
+      </div>
+      <h1>{{ heading_title }}</h1>
+      <ol class="breadcrumb">
+        {% for breadcrumb in breadcrumbs %}
+          <li class="breadcrumb-item"><a href="{{ breadcrumb.href }}">{{ breadcrumb.text }}</a></li>
+        {% endfor %}
+      </ol>
+    </div>
+  </div>
+  <div class="container-fluid">
+    <div class="card">
+      <div class="card-header"><i class="fa-solid fa-pencil"></i> {{ text_edit }}</div>
+      <div class="card-body">
+        <form id="form-paymos" action="{{ save }}" method="post" data-oc-toggle="ajax">
+          <div class="row mb-3">
+            <label class="col-sm-2 col-form-label">{{ entry_status }}</label>
+            <div class="col-sm-10">
+              <div class="form-check form-switch form-switch-lg">
+                <input type="hidden" name="payment_paymos_status" value="0"/>
+                <input type="checkbox" name="payment_paymos_status" value="1" id="input-status" class="form-check-input"{% if payment_paymos_status %} checked{% endif %}/>
+              </div>
+            </div>
+          </div>
+
+          <div class="row mb-3">
+            <label for="input-mode" class="col-sm-2 col-form-label">{{ entry_mode }}</label>
+            <div class="col-sm-10">
+              <select name="payment_paymos_mode" id="input-mode" class="form-select">
+                <option value="sandbox"{% if payment_paymos_mode == 'sandbox' %} selected{% endif %}>{{ text_sandbox }}</option>
+                <option value="live"{% if payment_paymos_mode == 'live' %} selected{% endif %}>{{ text_live }}</option>
+              </select>
+              <div class="form-text">{{ help_mode }}</div>
+            </div>
+          </div>
+
+          <div class="row mb-3">
+            <label class="col-sm-2 col-form-label">{{ entry_credentials }}</label>
+            <div class="col-sm-10">
+              {% if generated_config %}
+                <div class="alert alert-success mb-0">{{ text_generated_config }}</div>
+              {% else %}
+                <div class="alert alert-warning">{{ text_manual_config }}</div>
+              {% endif %}
+            </div>
+          </div>
+
+          <div class="row mb-3">
+            <label for="input-webhook-url" class="col-sm-2 col-form-label">{{ entry_webhook_url }}</label>
+            <div class="col-sm-10">
+              <input type="text" id="input-webhook-url" value="{{ webhook_url }}" class="form-control" readonly onclick="this.select();"/>
+              <div class="form-text">{{ help_webhook_url }}</div>
+            </div>
+          </div>
+
+          <div class="row mb-3">
+            <label for="input-title" class="col-sm-2 col-form-label">{{ entry_title }}</label>
+            <div class="col-sm-10">
+              <input type="text" name="payment_paymos_title" value="{{ payment_paymos_title }}" id="input-title" class="form-control"/>
+            </div>
+          </div>
+
+          <div class="row mb-3">
+            <label for="input-button-text" class="col-sm-2 col-form-label">{{ entry_button_text }}</label>
+            <div class="col-sm-10">
+              <input type="text" name="payment_paymos_button_text" value="{{ payment_paymos_button_text }}" id="input-button-text" class="form-control"/>
+            </div>
+          </div>
+
+          <div class="row mb-3">
+            <label for="input-invoice-lifetime" class="col-sm-2 col-form-label">{{ entry_invoice_lifetime }}</label>
+            <div class="col-sm-10">
+              <select name="payment_paymos_invoice_lifetime" id="input-invoice-lifetime" class="form-select">
+                {% for hours in [1, 3, 6, 12] %}
+                  <option value="{{ hours }}"{% if payment_paymos_invoice_lifetime == hours %} selected{% endif %}>{{ hours }}h</option>
+                {% endfor %}
+              </select>
+            </div>
+          </div>
+
+          {% set status_fields = {
+            'payment_paymos_pending_status_id': entry_pending_status,
+            'payment_paymos_confirming_status_id': entry_confirming_status,
+            'payment_paymos_paid_status_id': entry_paid_status,
+            'payment_paymos_failed_status_id': entry_failed_status,
+            'payment_paymos_cancelled_status_id': entry_cancelled_status
+          } %}
+          {% for name, label in status_fields %}
+            <div class="row mb-3">
+              <label for="input-{{ name }}" class="col-sm-2 col-form-label">{{ label }}</label>
+              <div class="col-sm-10">
+                <select name="{{ name }}" id="input-{{ name }}" class="form-select">
+                  {% for order_status in order_statuses %}
+                    <option value="{{ order_status.order_status_id }}"{% if attribute(_context, name) == order_status.order_status_id %} selected{% endif %}>{{ order_status.name }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+            </div>
+          {% endfor %}
+
+          <div class="row mb-3">
+            <label class="col-sm-2 col-form-label">{{ entry_debug_logging }}</label>
+            <div class="col-sm-10">
+              <div class="form-check form-switch form-switch-lg">
+                <input type="hidden" name="payment_paymos_debug_logging" value="0"/>
+                <input type="checkbox" name="payment_paymos_debug_logging" value="1" id="input-debug" class="form-check-input"{% if payment_paymos_debug_logging %} checked{% endif %}/>
+              </div>
+            </div>
+          </div>
+
+          <div class="row mb-3">
+            <label for="input-sort-order" class="col-sm-2 col-form-label">{{ entry_sort_order }}</label>
+            <div class="col-sm-10">
+              <input type="number" name="payment_paymos_sort_order" value="{{ payment_paymos_sort_order }}" id="input-sort-order" class="form-control"/>
+            </div>
+          </div>
+
+          {% if not generated_config %}
+            <fieldset>
+              <legend>{{ text_manual_credentials }}</legend>
+              <input type="hidden" name="payment_paymos_api_base_url" value="{{ payment_paymos_api_base_url }}"/>
+              {% for env in ['sandbox', 'live'] %}
+                <h5>{{ env == 'sandbox' ? text_sandbox : text_live }}</h5>
+                {% for field, label in {
+                  'api_key': entry_api_key,
+                  'api_secret': entry_api_secret,
+                  'project_id': entry_project_id,
+                  'webhook_secret': entry_webhook_secret
+                } %}
+                  {% set input_name = 'payment_paymos_' ~ env ~ '_' ~ field %}
+                  <div class="row mb-3">
+                    <label for="input-{{ input_name }}" class="col-sm-2 col-form-label">{{ label }}</label>
+                    <div class="col-sm-10">
+                      <input type="{{ field in ['api_secret', 'webhook_secret'] ? 'password' : 'text' }}" name="{{ input_name }}" value="{{ attribute(_context, input_name) }}" id="input-{{ input_name }}" class="form-control"/>
+                    </div>
+                  </div>
+                {% endfor %}
+              {% endfor %}
+            </fieldset>
+          {% endif %}
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+<script>
+document.getElementById('button-paymos-reconcile').addEventListener('click', function () {
+  fetch('{{ reconcile }}', {method: 'POST', headers: {'X-Requested-With': 'XMLHttpRequest'}})
+    .then(function (response) { return response.json(); })
+    .then(function (json) {
+      if (json.error) {
+        alert(json.error);
+        return;
+      }
+      if (json.success) {
+        alert(json.success);
+      }
+    });
+});
+</script>
+{{ footer }}
