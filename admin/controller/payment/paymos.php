@@ -43,8 +43,6 @@ class Paymos extends \Opencart\System\Engine\Controller
             'payment_paymos_mode',
             'payment_paymos_title',
             'payment_paymos_button_text',
-            'payment_paymos_invoice_lifetime',
-            'payment_paymos_debug_logging',
             'payment_paymos_pending_status_id',
             'payment_paymos_confirming_status_id',
             'payment_paymos_paid_status_id',
@@ -69,7 +67,6 @@ class Paymos extends \Opencart\System\Engine\Controller
         $data['payment_paymos_mode'] = $data['payment_paymos_mode'] ?: 'sandbox';
         $data['payment_paymos_title'] = $data['payment_paymos_title'] ?: $this->language->get('text_title_default');
         $data['payment_paymos_button_text'] = $data['payment_paymos_button_text'] ?: $this->language->get('button_confirm');
-        $data['payment_paymos_invoice_lifetime'] = $data['payment_paymos_invoice_lifetime'] ?: '12';
         $data['payment_paymos_pending_status_id'] = $data['payment_paymos_pending_status_id'] ?: 1;
         $data['payment_paymos_confirming_status_id'] = $data['payment_paymos_confirming_status_id'] ?: 2;
         $data['payment_paymos_paid_status_id'] = $data['payment_paymos_paid_status_id'] ?: 5;
@@ -151,8 +148,6 @@ class Paymos extends \Opencart\System\Engine\Controller
             'payment_paymos_mode',
             'payment_paymos_title',
             'payment_paymos_button_text',
-            'payment_paymos_invoice_lifetime',
-            'payment_paymos_debug_logging',
             'payment_paymos_pending_status_id',
             'payment_paymos_confirming_status_id',
             'payment_paymos_paid_status_id',

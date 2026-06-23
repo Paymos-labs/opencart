@@ -4,6 +4,7 @@ OpenCart 4 payment extension for stablecoin payments. Customer pays in USDT or U
 
 **Two-minute setup**: the `paymos.ocmod.zip` you download from [paymos.io/dashboard/cms](https://paymos.io/dashboard/cms) ships with your API keys pre-injected, your webhook callback URL pre-built from your OpenCart Store URL, and your signing secret pre-registered. No copy-paste, no separate dashboard trip after install.
 
+[![Version 1.0.0](https://img.shields.io/badge/Version-1.0.0-2e7d32)](CHANGELOG.md)
 [![OpenCart 4.0+](https://img.shields.io/badge/OpenCart-4.0%2B-1e88e5)](https://www.opencart.com/)
 [![PHP 8.1+](https://img.shields.io/badge/PHP-8.1%2B-777bb4)](https://www.php.net/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue)](LICENSE)
@@ -130,7 +131,6 @@ The package pre-fills everything technical. OpenCart admin only exposes presenta
 | Confirming Status | Order status while payment is confirming. |
 | Paid Status | Final paid order status. |
 | Failed / Cancelled Status | Statuses for failed terminal outcomes. |
-| Debug Logging | Sanitized OpenCart logs (off by default). |
 | Sort Order | Position among other payment methods at checkout. |
 
 Generated values loaded from `system/library/paymos/paymos-config.php`, not editable in OpenCart:

@@ -15,32 +15,52 @@ class Paymos extends \Opencart\System\Engine\Controller
         $this->load->language('extension/paymos/payment/paymos');
 
         $data['button_confirm'] = $this->config->get('payment_paymos_button_text') ?: $this->language->get('button_confirm');
-        $data['action'] = $this->url->link('extension/paymos/payment/paymos.checkout', '', true);
+        // OpenCart 4 dispatches the checkout confirm button to the payment
+        // extension's confirm() method (see core cod.php / free_checkout.php).
+        $data['action'] = $this->url->link('extension/paymos/payment/paymos.confirm', '', true);
 
         return $this->load->view('extension/paymos/payment/paymos', $data);
     }
 
-    public function checkout(): void
+    public function confirm(): void
     {
         $this->load->language('extension/paymos/payment/paymos');
         $json = [];
 
-        try {
-            if (empty($this->session->data['order_id'])) {
-                throw new \RuntimeException('OpenCart session does not contain order_id.');
+        // Validate the order the same way the core gateways do: the session must
+        // carry an order_id that resolves to a real order via model checkout/order.
+        if (isset($this->session->data['order_id'])) {
+            $this->load->model('checkout/order');
+            $order_info = $this->model_checkout_order->getOrder($this->session->data['order_id']);
+            if (!$order_info) {
+                $json['error'] = $this->language->get('error_checkout');
             }
-
-            \PaymosOpenCart\Migrations::ensure($this->db);
-
-            $result = (new \PaymosOpenCart\GatewayCheckout(
-                new \PaymosOpenCart\InvoiceStore($this->db),
-                new \PaymosOpenCart\OpenCartAdapter($this->registry)
-            ))->start((int) $this->session->data['order_id'], $this->settings());
-
-            $json['redirect'] = $result['payment_url'];
-        } catch (\Throwable $e) {
-            $this->log->write('[Paymos] Checkout failed: ' . $e->getMessage());
+        } else {
             $json['error'] = $this->language->get('error_checkout');
+        }
+
+        // Guard: only act when Paymos is the chosen payment method. Without this,
+        // hitting this route while another gateway was selected would still mint a
+        // Paymos invoice for the order (core gateways guard on the method code).
+        if (!isset($this->session->data['payment_method'])
+            || $this->session->data['payment_method']['code'] != 'paymos.paymos') {
+            $json['error'] = $this->language->get('error_checkout');
+        }
+
+        if (!$json) {
+            try {
+                \PaymosOpenCart\Migrations::ensure($this->db);
+
+                $result = (new \PaymosOpenCart\GatewayCheckout(
+                    new \PaymosOpenCart\InvoiceStore($this->db),
+                    new \PaymosOpenCart\OpenCartAdapter($this->registry)
+                ))->start((int) $this->session->data['order_id'], $this->settings());
+
+                $json['redirect'] = $result['payment_url'];
+            } catch (\Throwable $e) {
+                $this->log->write('[Paymos] Checkout failed: ' . $e->getMessage());
+                $json['error'] = $this->language->get('error_checkout');
+            }
         }
 
         $this->response->addHeader('Content-Type: application/json');
@@ -52,12 +72,9 @@ class Paymos extends \Opencart\System\Engine\Controller
         \PaymosOpenCart\Migrations::ensure($this->db);
 
         $rawBody = file_get_contents('php://input');
-        $signature = '';
-        if (isset($this->request->server['HTTP_X_WEBHOOK_SIGNATURE'])) {
-            $signature = (string) $this->request->server['HTTP_X_WEBHOOK_SIGNATURE'];
-        } elseif (isset($this->request->server['HTTP_X_PAYMOS_SIGNATURE'])) {
-            $signature = (string) $this->request->server['HTTP_X_PAYMOS_SIGNATURE'];
-        }
+        $signature = isset($this->request->server['HTTP_X_WEBHOOK_SIGNATURE'])
+            ? (string) $this->request->server['HTTP_X_WEBHOOK_SIGNATURE']
+            : '';
 
         $result = (new \PaymosOpenCart\CallbackProcessor(
             new \PaymosOpenCart\OpenCartAdapter($this->registry),
@@ -66,24 +83,13 @@ class Paymos extends \Opencart\System\Engine\Controller
         ))->handle($rawBody === false ? '' : $rawBody, $signature, $this->settings());
 
         $this->response->addHeader('Content-Type: text/plain');
-        $this->addStatusHeader($result->statusCode());
+        // Set the status via http_response_code(), not a hand-built "HTTP/1.1 …"
+        // status line: a raw status line is invalid under HTTP/2 and the front
+        // controller / web server may discard it, returning 200 with a junk
+        // header — the Paymos webhook worker would then treat a failed callback
+        // as delivered and never retry.
+        http_response_code($result->statusCode());
         $this->response->setOutput($result->body());
-    }
-
-    private function addStatusHeader(int $statusCode): void
-    {
-        $messages = [
-            200 => 'OK',
-            400 => 'Bad Request',
-            401 => 'Unauthorized',
-            500 => 'Internal Server Error',
-        ];
-        $message = $messages[$statusCode] ?? 'OK';
-        $protocol = isset($this->request->server['SERVER_PROTOCOL'])
-            ? (string) $this->request->server['SERVER_PROTOCOL']
-            : 'HTTP/1.1';
-
-        $this->response->addHeader($protocol . ' ' . $statusCode . ' ' . $message);
     }
 
     /**
@@ -96,8 +102,6 @@ class Paymos extends \Opencart\System\Engine\Controller
             'payment_paymos_mode',
             'payment_paymos_title',
             'payment_paymos_button_text',
-            'payment_paymos_invoice_lifetime',
-            'payment_paymos_debug_logging',
             'payment_paymos_pending_status_id',
             'payment_paymos_confirming_status_id',
             'payment_paymos_paid_status_id',

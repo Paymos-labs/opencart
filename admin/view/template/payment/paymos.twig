@@ -74,17 +74,6 @@
             </div>
           </div>
 
-          <div class="row mb-3">
-            <label for="input-invoice-lifetime" class="col-sm-2 col-form-label">{{ entry_invoice_lifetime }}</label>
-            <div class="col-sm-10">
-              <select name="payment_paymos_invoice_lifetime" id="input-invoice-lifetime" class="form-select">
-                {% for hours in [1, 3, 6, 12] %}
-                  <option value="{{ hours }}"{% if payment_paymos_invoice_lifetime == hours %} selected{% endif %}>{{ hours }}h</option>
-                {% endfor %}
-              </select>
-            </div>
-          </div>
-
           {% set status_fields = {
             'payment_paymos_pending_status_id': entry_pending_status,
             'payment_paymos_confirming_status_id': entry_confirming_status,
@@ -104,16 +93,6 @@
               </div>
             </div>
           {% endfor %}
-
-          <div class="row mb-3">
-            <label class="col-sm-2 col-form-label">{{ entry_debug_logging }}</label>
-            <div class="col-sm-10">
-              <div class="form-check form-switch form-switch-lg">
-                <input type="hidden" name="payment_paymos_debug_logging" value="0"/>
-                <input type="checkbox" name="payment_paymos_debug_logging" value="1" id="input-debug" class="form-check-input"{% if payment_paymos_debug_logging %} checked{% endif %}/>
-              </div>
-            </div>
-          </div>
 
           <div class="row mb-3">
             <label for="input-sort-order" class="col-sm-2 col-form-label">{{ entry_sort_order }}</label>

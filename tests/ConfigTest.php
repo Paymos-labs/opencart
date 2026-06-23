@@ -13,7 +13,6 @@ function test_opencart_config_builds_client_config_and_secret_map()
     assertSameValue('https://api.paymos.test', $config->clientConfig()->baseUrl(), 'base URL must be normalized into SDK config.');
     assertSameValue('pk_test_123', $config->clientConfig()->apiKey(), 'sandbox mode must use sandbox API key.');
     assertSameValue(array('sandbox' => 'whsec_sandbox', 'live' => 'whsec_live'), $config->webhookSecrets(), 'both webhook secrets should be available for callback verification.');
-    assertSameValue(43200, $config->invoiceLifetimeSeconds(), '12 hour invoice lifetime must be seconds.');
 }
 
 function test_opencart_generated_config_supplies_read_only_credentials()

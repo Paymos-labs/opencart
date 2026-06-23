@@ -24,6 +24,7 @@ spl_autoload_register(static function ($class) {
             getenv('PAYMOS_SDK_SRC')
                 ? rtrim(getenv('PAYMOS_SDK_SRC'), '/\\') . '/' . str_replace('\\', '/', $relative) . '.php'
                 : null,
+            dirname(rtrim(PAYMOS_OPENCART_PLUGIN_DIR, '/\\')) . '/php-sdk/src/' . str_replace('\\', '/', $relative) . '.php',
         );
         foreach ($candidates as $candidate) {
             if ($candidate !== null && is_file($candidate)) {
@@ -83,8 +84,6 @@ function opencart_settings(array $overrides = array())
         'payment_paymos_confirming_status_id' => '2',
         'payment_paymos_failed_status_id' => '10',
         'payment_paymos_cancelled_status_id' => '7',
-        'payment_paymos_invoice_lifetime' => '12',
-        'payment_paymos_debug_logging' => '0',
     ), $overrides);
 }
 

@@ -120,32 +120,11 @@ final class Config
         return $secrets;
     }
 
-    public function invoiceLifetimeSeconds()
-    {
-        $hours = (int) $this->setting('payment_paymos_invoice_lifetime');
-        if ($hours < 1 || $hours > 12) {
-            $hours = 12;
-        }
-
-        return $hours * 3600;
-    }
-
-    public function buttonText()
-    {
-        $text = $this->setting('payment_paymos_button_text');
-        return $text === '' ? 'Pay with Paymos' : $text;
-    }
-
     public function statusId($action)
     {
         $key = 'payment_paymos_' . $action . '_status_id';
         $value = (int) $this->setting($key);
         return $value > 0 ? $value : 1;
-    }
-
-    public function debugLogging()
-    {
-        return in_array(strtolower($this->setting('payment_paymos_debug_logging')), array('1', 'on', 'yes', 'true'), true);
     }
 
     public static function hasGeneratedConfig()

@@ -1,5 +1,6 @@
 {
   "name": "Paymos OpenCart Payment Gateway",
+  "description": "Accept USDT and USDC stablecoin payments across 11 chains. Hosted checkout, HMAC-signed webhooks, on-demand order reconciliation.",
   "version": "1.0.0",
   "author": "Paymos",
   "link": "https://paymos.io"

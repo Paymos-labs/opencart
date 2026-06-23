@@ -141,7 +141,6 @@ final class CallbackProcessor
         }
 
         $action = StatusMapper::invoiceAction($event->type(), $event->status());
-        $this->invoiceStore->updateStatus($event->invoiceId(), $event->status());
 
         if ($action === StatusMapper::ACTION_IGNORE) {
             return false;
@@ -150,6 +149,21 @@ final class CallbackProcessor
         $order = $this->opencart->getOrder((int) $row['opencart_order_id']);
         if (count($order) === 0) {
             throw new \RuntimeException('OpenCart order for Paymos invoice snapshot was not found.');
+        }
+
+        // Roll-back guard: an out-of-order/redelivered webhook (a stale confirming,
+        // a late cancelled/expired/underpaid after the order is already paid) must
+        // never downgrade a paid order. Reverse-verify covers forgery, not delivery
+        // order — this is the second line for that.
+        if ($this->wouldRollBackPaidOrder($config, $order, $action)) {
+            $this->invoiceStore->updateStatus($event->invoiceId(), $event->status());
+            $this->opencart->addOrderHistory(
+                (int) $row['opencart_order_id'],
+                (int) $this->scalar($order, 'order_status_id', $config->statusId('paid')),
+                'Paymos ignored a stale invoice status after payment completed. Invoice: ' . $event->invoiceId(),
+                false
+            );
+            return false;
         }
 
         if ($action === StatusMapper::ACTION_PAYMENT_COMPLETE) {
@@ -163,14 +177,24 @@ final class CallbackProcessor
                 $event->orderAmount(),
                 $event->orderCurrency()
             )) {
-                throw new \RuntimeException(AmountGuard::mismatchSummary(
-                    $row['amount'],
-                    $row['currency'],
-                    $currentAmount,
-                    $currentCurrency,
-                    $event->orderAmount(),
-                    $event->orderCurrency()
-                ));
+                // Amount mismatch is NOT a transient failure — do not throw into the
+                // retry path (the server would redeliver forever). Hold the order for
+                // manual review and acknowledge the webhook.
+                $this->invoiceStore->updateStatus($event->invoiceId(), $event->status());
+                $this->opencart->addOrderHistory(
+                    (int) $row['opencart_order_id'],
+                    $config->statusId('confirming'),
+                    'Paymos payment needs manual review. ' . AmountGuard::mismatchSummary(
+                        $row['amount'],
+                        $row['currency'],
+                        $currentAmount,
+                        $currentCurrency,
+                        $event->orderAmount(),
+                        $event->orderCurrency()
+                    ),
+                    false
+                );
+                return false;
             }
         }
 
@@ -182,7 +206,31 @@ final class CallbackProcessor
             false
         );
 
+        // Persist the snapshot status only after the order mutation succeeds, so a
+        // failed addOrderHistory leaves the event for retry without the snapshot and
+        // order state diverging.
+        $this->invoiceStore->updateStatus($event->invoiceId(), $event->status());
+
         return $action === StatusMapper::ACTION_PAYMENT_COMPLETE;
+    }
+
+    /**
+     * @param array<string, mixed> $order
+     */
+    private function wouldRollBackPaidOrder(Config $config, array $order, $action)
+    {
+        $paidStatusId = (int) $config->statusId('paid');
+        $currentStatusId = (int) $this->scalar($order, 'order_status_id', '0');
+        if ($paidStatusId === 0 || $currentStatusId !== $paidStatusId) {
+            return false;
+        }
+
+        return in_array($action, array(
+            StatusMapper::ACTION_CONFIRMING,
+            StatusMapper::ACTION_AWAITING_PAYMENT,
+            StatusMapper::ACTION_FAIL_ORDER,
+            StatusMapper::ACTION_CANCEL_ORDER,
+        ), true);
     }
 
     /**
@@ -265,7 +313,15 @@ final class CallbackProcessor
             case StatusMapper::ACTION_CONFIRMING:
                 return 'Paymos payment is confirming. Invoice: ' . $invoice;
             case StatusMapper::ACTION_PAYMENT_COMPLETE:
-                return 'Paymos payment completed. Invoice: ' . $invoice;
+                $transfer = $this->selectedTransfer($event);
+                $comment = 'Paymos payment completed. Invoice: ' . $invoice;
+                if ($transfer['tx_hash'] !== '') {
+                    $comment .= '. Transaction: ' . $transfer['tx_hash'];
+                }
+                if ($transfer['explorer_url'] !== '') {
+                    $comment .= ' (' . $transfer['explorer_url'] . ')';
+                }
+                return $comment;
             case StatusMapper::ACTION_FAIL_ORDER:
                 return 'Paymos payment failed or remained underpaid. Invoice: ' . $invoice;
             case StatusMapper::ACTION_CANCEL_ORDER:
@@ -275,13 +331,57 @@ final class CallbackProcessor
         }
     }
 
+    /**
+     * Latest confirmed on-chain transfer (tx_hash + explorer_url) from
+     * data.payment.transfers[]; empty strings when the payload carries none
+     * (sandbox / simulated payment).
+     *
+     * @return array{tx_hash: string, explorer_url: string}
+     */
+    private function selectedTransfer(WebhookEvent $event)
+    {
+        $payload = $event->toArray();
+        $data = isset($payload['data']) && is_array($payload['data']) ? $payload['data'] : array();
+        $transfers = null;
+        if (isset($data['payment']['transfers']) && is_array($data['payment']['transfers'])) {
+            $transfers = $data['payment']['transfers'];
+        } elseif (isset($data['transfers']) && is_array($data['transfers'])) {
+            $transfers = $data['transfers'];
+        }
+
+        $confirmed = null;
+        $latest = null;
+        if ($transfers !== null) {
+            foreach ($transfers as $transfer) {
+                if (!is_array($transfer) || !isset($transfer['tx_hash']) || !is_string($transfer['tx_hash']) || $transfer['tx_hash'] === '') {
+                    continue;
+                }
+                $latest = $transfer;
+                $status = isset($transfer['status']) && is_string($transfer['status']) ? strtolower($transfer['status']) : '';
+                if ($status === 'confirmed') {
+                    $confirmed = $transfer;
+                }
+            }
+        }
+
+        $chosen = $confirmed !== null ? $confirmed : $latest;
+        if ($chosen === null) {
+            return array('tx_hash' => '', 'explorer_url' => '');
+        }
+
+        return array(
+            'tx_hash' => (string) $chosen['tx_hash'],
+            'explorer_url' => isset($chosen['explorer_url']) && is_string($chosen['explorer_url']) ? $chosen['explorer_url'] : '',
+        );
+    }
+
     private function eventTypeForStatus($status)
     {
         switch (StatusMapper::invoiceAction('', $status)) {
             case StatusMapper::ACTION_CONFIRMING:
                 return 'invoice.confirming';
             case StatusMapper::ACTION_AWAITING_PAYMENT:
-                return 'invoice.underpaid_waiting';
+                return ((string) $status === 'awaiting_payment') ? 'invoice.awaiting_payment' : 'invoice.underpaid_waiting';
             case StatusMapper::ACTION_PAYMENT_COMPLETE:
                 return ((string) $status === 'paid_over') ? 'invoice.paid_over' : 'invoice.paid';
             case StatusMapper::ACTION_FAIL_ORDER:
@@ -290,7 +390,7 @@ final class CallbackProcessor
                 return ((string) $status === 'expired') ? 'invoice.expired' : 'invoice.cancelled';
         }
 
-        return 'invoice.updated';
+        return '';
     }
 
     /**

@@ -1,40 +1,38 @@
 <?php
 
 $_['heading_title'] = 'Paymos';
-$_['text_extension'] = 'Extensions';
-$_['text_success'] = 'Success: You have modified Paymos settings.';
-$_['text_reconcile_success'] = 'Paymos reconciliation completed. Orders completed: %s.';
-$_['text_edit'] = 'Edit Paymos';
-$_['text_sandbox'] = 'Sandbox';
-$_['text_live'] = 'Live';
-$_['text_generated_config'] = 'Credentials are loaded from the Paymos dashboard package and are read-only in OpenCart.';
-$_['text_manual_config'] = 'Generated credentials were not found. Install the package downloaded from the Paymos dashboard or fill credentials manually.';
-$_['text_manual_credentials'] = 'Manual credentials';
-$_['text_title_default'] = 'Pay with stablecoins';
+$_['text_extension'] = 'Расширения';
+$_['text_success'] = 'Настройки Paymos сохранены.';
+$_['text_reconcile_success'] = 'Сверка Paymos завершена. Заказов обработано: %s.';
+$_['text_edit'] = 'Настройки Paymos';
+$_['text_sandbox'] = 'Песочница';
+$_['text_live'] = 'Боевой режим';
+$_['text_generated_config'] = 'Ключи загружены из пакета личного кабинета Paymos и доступны в OpenCart только для чтения.';
+$_['text_manual_config'] = 'Сгенерированные ключи не найдены. Установите пакет из личного кабинета Paymos или введите ключи вручную.';
+$_['text_manual_credentials'] = 'Ключи вручную';
+$_['text_title_default'] = 'Оплата стейблкоинами';
 
-$_['entry_status'] = 'Status';
-$_['entry_mode'] = 'Mode';
-$_['entry_credentials'] = 'Credentials';
+$_['entry_status'] = 'Статус';
+$_['entry_mode'] = 'Режим';
+$_['entry_credentials'] = 'Ключи доступа';
 $_['entry_webhook_url'] = 'Webhook URL';
-$_['entry_title'] = 'Title';
-$_['entry_button_text'] = 'Button text';
-$_['entry_invoice_lifetime'] = 'Invoice lifetime';
-$_['entry_pending_status'] = 'Pending status';
-$_['entry_confirming_status'] = 'Confirming status';
-$_['entry_paid_status'] = 'Paid status';
-$_['entry_failed_status'] = 'Failed status';
-$_['entry_cancelled_status'] = 'Cancelled status';
-$_['entry_debug_logging'] = 'Debug logging';
-$_['entry_sort_order'] = 'Sort order';
-$_['entry_api_key'] = 'API key';
-$_['entry_api_secret'] = 'API secret';
-$_['entry_project_id'] = 'Project ID';
-$_['entry_webhook_secret'] = 'Webhook secret';
+$_['entry_title'] = 'Название';
+$_['entry_button_text'] = 'Текст кнопки';
+$_['entry_pending_status'] = 'Статус «Ожидает оплаты»';
+$_['entry_confirming_status'] = 'Статус «Подтверждается»';
+$_['entry_paid_status'] = 'Статус «Оплачено»';
+$_['entry_failed_status'] = 'Статус «Ошибка оплаты»';
+$_['entry_cancelled_status'] = 'Статус «Отменён»';
+$_['entry_sort_order'] = 'Порядок сортировки';
+$_['entry_api_key'] = 'API-ключ';
+$_['entry_api_secret'] = 'API-секрет';
+$_['entry_project_id'] = 'ID проекта';
+$_['entry_webhook_secret'] = 'Секрет вебхука';
 
-$_['help_mode'] = 'Use Sandbox for test payments, then switch to Live when ready.';
-$_['help_webhook_url'] = 'Paymos dashboard registers this URL automatically when the plugin package is generated.';
+$_['help_mode'] = 'Используйте «Песочницу» для тестовых платежей и переключитесь на «Боевой режим», когда всё готово.';
+$_['help_webhook_url'] = 'Личный кабинет Paymos регистрирует этот адрес автоматически при генерации пакета плагина.';
 
-$_['button_reconcile'] = 'Reconcile Paymos orders';
-$_['button_confirm'] = 'Pay with Paymos';
+$_['button_reconcile'] = 'Сверить заказы Paymos';
+$_['button_confirm'] = 'Оплатить через Paymos';
 
-$_['error_permission'] = 'Warning: You do not have permission to modify Paymos.';
+$_['error_permission'] = 'Внимание: у вас нет прав на изменение настроек Paymos.';
