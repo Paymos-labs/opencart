@@ -31,9 +31,11 @@ class Paymos extends \Opencart\System\Engine\Controller
 
         $data['save'] = $this->url->link('extension/paymos/payment/paymos.save', 'user_token=' . $this->session->data['user_token']);
         $data['reconcile'] = $this->url->link('extension/paymos/payment/paymos.reconcile', 'user_token=' . $this->session->data['user_token']);
+        $data['connect_start'] = $this->url->link('extension/paymos/payment/paymos.connectStart', 'user_token=' . $this->session->data['user_token']);
+        $data['connect_poll'] = $this->url->link('extension/paymos/payment/paymos.connectPoll', 'user_token=' . $this->session->data['user_token']);
         $data['back'] = $this->url->link('marketplace/extension', 'user_token=' . $this->session->data['user_token'] . '&type=payment');
         $data['webhook_url'] = rtrim((string) $this->config->get('config_url'), '/') . '/index.php?route=extension/paymos/payment/paymos.callback';
-        $data['generated_config'] = \PaymosOpenCart\Config::hasGeneratedConfig();
+        $data['generated_config'] = trim((string) $this->config->get('payment_paymos_credentials')) !== '';
 
         $this->load->model('localisation/order_status');
         $data['order_statuses'] = $this->model_localisation_order_status->getOrderStatuses();
@@ -49,15 +51,6 @@ class Paymos extends \Opencart\System\Engine\Controller
             'payment_paymos_failed_status_id',
             'payment_paymos_cancelled_status_id',
             'payment_paymos_sort_order',
-            'payment_paymos_api_base_url',
-            'payment_paymos_sandbox_api_key',
-            'payment_paymos_sandbox_api_secret',
-            'payment_paymos_sandbox_project_id',
-            'payment_paymos_sandbox_webhook_secret',
-            'payment_paymos_live_api_key',
-            'payment_paymos_live_api_secret',
-            'payment_paymos_live_project_id',
-            'payment_paymos_live_webhook_secret',
         ];
 
         foreach ($fields as $field) {
@@ -72,7 +65,6 @@ class Paymos extends \Opencart\System\Engine\Controller
         $data['payment_paymos_paid_status_id'] = $data['payment_paymos_paid_status_id'] ?: 5;
         $data['payment_paymos_failed_status_id'] = $data['payment_paymos_failed_status_id'] ?: 10;
         $data['payment_paymos_cancelled_status_id'] = $data['payment_paymos_cancelled_status_id'] ?: 7;
-        $data['payment_paymos_api_base_url'] = $data['payment_paymos_api_base_url'] ?: \PaymosOpenCart\Config::DEFAULT_BASE_URL;
 
         $data['header'] = $this->load->controller('common/header');
         $data['column_left'] = $this->load->controller('common/column_left');
@@ -91,6 +83,17 @@ class Paymos extends \Opencart\System\Engine\Controller
         }
 
         if (!$json) {
+            foreach (array_keys($this->request->post) as $key) {
+                if (preg_match('/^payment_paymos_(sandbox|live)_(api_key|api_secret|project_id|webhook_secret)$/', (string) $key)) {
+                    unset($this->request->post[$key]);
+                }
+            }
+            $credentials = trim((string) $this->config->get('payment_paymos_credentials'));
+            if ($credentials !== '') {
+                // editSetting() replaces every value with this prefix. Preserve
+                // the opaque envelope without ever sending it through the form.
+                $this->request->post['payment_paymos_credentials'] = $credentials;
+            }
             $this->load->model('setting/setting');
             $this->model_setting_setting->editSetting('payment_paymos', $this->request->post);
             $json['success'] = $this->language->get('text_success');
@@ -98,6 +101,50 @@ class Paymos extends \Opencart\System\Engine\Controller
 
         $this->response->addHeader('Content-Type: application/json');
         $this->response->setOutput(json_encode($json));
+    }
+
+    public function connectStart(): void
+    {
+        $this->connectResponse(function (): array {
+            $state = $this->connectClient()->start('opencart', $this->sourceUrl());
+            $this->saveProtected('payment_paymos_connect_state', array(
+                'schema' => 1,
+                'expires_at' => time() + (int) $state['expires_in'],
+                'state' => $state,
+            ), 'paymos-opencart-connect-state-v1');
+            return array(
+                'verification_url' => $state['verification_url'],
+                'user_code' => $state['user_code'],
+                'interval' => $state['interval'],
+            );
+        });
+    }
+
+    public function connectPoll(): void
+    {
+        $this->connectResponse(function (): array {
+            $payload = $this->loadProtected('payment_paymos_connect_state', 'paymos-opencart-connect-state-v1');
+            if (!isset($payload['state']['device_code']) || time() >= (int) ($payload['expires_at'] ?? 0)) {
+                throw new \RuntimeException('No active Paymos connection request.');
+            }
+            $result = $this->connectClient()->poll((string) $payload['state']['device_code']);
+            if ($result['status'] === 'connected') {
+                if ($result['plugin'] !== 'opencart' || rtrim((string) $result['source_url'], '/') !== $this->sourceUrl()) {
+                    throw new \RuntimeException('Paymos connection response does not match this store.');
+                }
+                $this->saveProtected('payment_paymos_credentials', array(
+                    'schema' => 1,
+                    'environments' => $result['credentials'],
+                ), 'paymos-opencart-credentials-v1');
+                $this->deleteSettingValue('payment_paymos_connect_state');
+                return array('status' => 'connected');
+            }
+            if (in_array($result['status'], array('authorization_pending', 'slow_down'), true)) {
+                return array('status' => $result['status']);
+            }
+            $this->deleteSettingValue('payment_paymos_connect_state');
+            throw new \RuntimeException('Paymos connection was denied or expired.');
+        });
     }
 
     public function reconcile(): void
@@ -153,21 +200,69 @@ class Paymos extends \Opencart\System\Engine\Controller
             'payment_paymos_paid_status_id',
             'payment_paymos_failed_status_id',
             'payment_paymos_cancelled_status_id',
-            'payment_paymos_api_base_url',
-            'payment_paymos_sandbox_api_key',
-            'payment_paymos_sandbox_api_secret',
-            'payment_paymos_sandbox_project_id',
-            'payment_paymos_sandbox_webhook_secret',
-            'payment_paymos_live_api_key',
-            'payment_paymos_live_api_secret',
-            'payment_paymos_live_project_id',
-            'payment_paymos_live_webhook_secret',
         ];
 
         foreach ($keys as $key) {
             $settings[$key] = $this->config->get($key);
         }
 
+        $settings['payment_paymos_credentials'] = $this->config->get('payment_paymos_credentials');
+        $settings['payment_paymos_encryption_key'] = $this->encryptionKey();
+
         return $settings;
+    }
+
+    private function connectResponse(callable $callback): void
+    {
+        $json = array();
+        if (!$this->user->hasPermission('modify', 'extension/paymos/payment/paymos')) {
+            $json['error'] = 'Access denied.';
+        } else {
+            try {
+                $json['success'] = $callback();
+            } catch (\Throwable $exception) {
+                $json['error'] = $exception->getMessage();
+            }
+        }
+        $this->response->addHeader('Content-Type: application/json');
+        $this->response->setOutput(json_encode($json));
+    }
+
+    private function connectClient(): \Paymos\Connect\DeviceConnectClient
+    {
+        return new \Paymos\Connect\DeviceConnectClient('https://app.paymos.io');
+    }
+
+    private function sourceUrl(): string
+    {
+        return rtrim((string) $this->config->get('config_url'), '/');
+    }
+
+    private function encryptionKey(): string
+    {
+        $key = trim((string) $this->config->get('config_encryption'));
+        if ($key === '') {
+            throw new \RuntimeException('OpenCart encryption key is not configured.');
+        }
+        return $key;
+    }
+
+    private function saveProtected(string $setting, array $payload, string $aad): void
+    {
+        $encoded = \Paymos\Plugin\AesGcmEnvelope::seal($payload, $this->encryptionKey(), $aad);
+        $this->load->model('setting/setting');
+        $this->model_setting_setting->editValue('payment_paymos', $setting, $encoded);
+    }
+
+    private function loadProtected(string $setting, string $aad): array
+    {
+        $encoded = trim((string) $this->config->get($setting));
+        return $encoded === '' ? array() : \Paymos\Plugin\AesGcmEnvelope::open($encoded, $this->encryptionKey(), $aad);
+    }
+
+    private function deleteSettingValue(string $setting): void
+    {
+        $this->load->model('setting/setting');
+        $this->model_setting_setting->editValue('payment_paymos', $setting, '');
     }
 }

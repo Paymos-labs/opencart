@@ -5,16 +5,21 @@ declare(strict_types=1);
 namespace PaymosOpenCart;
 
 use Paymos\ClientConfig;
+use Paymos\Plugin\AesGcmEnvelope;
+use Paymos\Plugin\CredentialSet;
 
 final class Config
 {
     public const DEFAULT_BASE_URL = 'https://api.paymos.io';
 
-    /** @var array<string, mixed>|null */
-    private static $generated;
+    /** @var array<string, mixed> */
+    private static $testConfig = array();
 
     /** @var array<string, mixed> */
     private $settings;
+
+    /** @var array<string, array<string, string>>|null */
+    private $encryptedEnvironments;
 
     /**
      * @param array<string, mixed> $settings
@@ -88,13 +93,16 @@ final class Config
     public function apiBaseUrlForEnvironment($environment)
     {
         $environment = $this->normalizeEnvironment($environment);
-        $generated = self::generatedEnvironment($environment);
-        if (isset($generated['base_url']) && is_scalar($generated['base_url']) && trim((string) $generated['base_url']) !== '') {
-            return rtrim((string) $generated['base_url'], '/');
+        $encrypted = $this->encryptedEnvironments();
+        if (isset($encrypted[$environment]['base_url']) && trim((string) $encrypted[$environment]['base_url']) !== '') {
+            return rtrim((string) $encrypted[$environment]['base_url'], '/');
+        }
+        $test = self::testEnvironment($environment);
+        if (isset($test['base_url']) && is_scalar($test['base_url']) && trim((string) $test['base_url']) !== '') {
+            return rtrim((string) $test['base_url'], '/');
         }
 
-        $baseUrl = $this->setting('payment_paymos_api_base_url');
-        return $baseUrl === '' ? self::DEFAULT_BASE_URL : rtrim($baseUrl, '/');
+        return self::DEFAULT_BASE_URL;
     }
 
     public function environment()
@@ -127,15 +135,15 @@ final class Config
         return $value > 0 ? $value : 1;
     }
 
-    public static function hasGeneratedConfig()
-    {
-        $generated = self::generated();
-        return isset($generated['environments']) && is_array($generated['environments']);
-    }
-
     public static function resetForTests()
     {
-        self::$generated = null;
+        self::$testConfig = array();
+    }
+
+    /** @param array<string, mixed> $config */
+    public static function useConfigForTests(array $config)
+    {
+        self::$testConfig = $config;
     }
 
     private function assertEnvironmentConfigured($environment)
@@ -183,12 +191,37 @@ final class Config
     private function environmentValue($environment, $field)
     {
         $environment = $this->normalizeEnvironment($environment);
-        $generated = self::generatedEnvironment($environment);
-        if (isset($generated[$field]) && is_scalar($generated[$field]) && trim((string) $generated[$field]) !== '') {
-            return trim((string) $generated[$field]);
+        $encrypted = $this->encryptedEnvironments();
+        if (isset($encrypted[$environment][$field]) && trim((string) $encrypted[$environment][$field]) !== '') {
+            return trim((string) $encrypted[$environment][$field]);
         }
+        $test = self::testEnvironment($environment);
+        if (isset($test[$field]) && is_scalar($test[$field]) && trim((string) $test[$field]) !== '') {
+            return trim((string) $test[$field]);
+        }
+        return '';
+    }
 
-        return $this->setting('payment_paymos_' . $environment . '_' . $field);
+    /** @return array<string, array<string, string>> */
+    private function encryptedEnvironments()
+    {
+        if ($this->encryptedEnvironments !== null) {
+            return $this->encryptedEnvironments;
+        }
+        $encoded = $this->setting('payment_paymos_credentials');
+        $key = $this->setting('payment_paymos_encryption_key');
+        if ($encoded === '' || $key === '') {
+            $this->encryptedEnvironments = array();
+            return $this->encryptedEnvironments;
+        }
+        $payload = AesGcmEnvelope::open($encoded, $key, 'paymos-opencart-credentials-v1');
+        if (!isset($payload['schema'], $payload['environments'])
+            || (int) $payload['schema'] !== 1
+            || !is_array($payload['environments'])) {
+            throw new \RuntimeException('Stored Paymos credentials have an invalid schema.');
+        }
+        $this->encryptedEnvironments = CredentialSet::normalize($payload['environments']);
+        return $this->encryptedEnvironments;
     }
 
     private function normalizeEnvironment($environment)
@@ -208,39 +241,15 @@ final class Config
             : '';
     }
 
-    /**
-     * @return array<string, mixed>
-     */
-    private static function generatedEnvironment($environment)
+    /** @return array<string, mixed> */
+    private static function testEnvironment($environment)
     {
-        $generated = self::generated();
-        if (!isset($generated['environments']) || !is_array($generated['environments'])) {
-            return array();
-        }
-
-        $environments = $generated['environments'];
+        $environments = isset(self::$testConfig['environments']) && is_array(self::$testConfig['environments'])
+            ? self::$testConfig['environments']
+            : array();
         return isset($environments[$environment]) && is_array($environments[$environment])
             ? $environments[$environment]
             : array();
     }
 
-    /**
-     * @return array<string, mixed>
-     */
-    private static function generated()
-    {
-        if (self::$generated !== null) {
-            return self::$generated;
-        }
-
-        $file = dirname(__DIR__) . '/paymos-config.php';
-        if (!is_readable($file)) {
-            self::$generated = array();
-            return self::$generated;
-        }
-
-        $config = require $file;
-        self::$generated = is_array($config) ? $config : array();
-        return self::$generated;
-    }
 }

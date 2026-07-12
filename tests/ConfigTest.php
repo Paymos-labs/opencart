@@ -17,6 +17,13 @@ function test_opencart_config_builds_client_config_and_secret_map()
 
 function test_opencart_generated_config_supplies_read_only_credentials()
 {
+    $settings = opencart_settings(array(
+        'payment_paymos_mode' => 'live',
+        'payment_paymos_live_api_key' => '',
+        'payment_paymos_live_api_secret' => '',
+        'payment_paymos_live_project_id' => '',
+        'payment_paymos_live_webhook_secret' => '',
+    ));
     paymos_opencart_write_generated_config("array(
         'config_version' => 2,
         'environments' => array(
@@ -37,13 +44,7 @@ function test_opencart_generated_config_supplies_read_only_credentials()
         ),
     )");
 
-    $config = Config::fromSettings(opencart_settings(array(
-        'payment_paymos_mode' => 'live',
-        'payment_paymos_live_api_key' => '',
-        'payment_paymos_live_api_secret' => '',
-        'payment_paymos_live_project_id' => '',
-        'payment_paymos_live_webhook_secret' => '',
-    )));
+    $config = Config::fromSettings($settings);
 
     assertSameValue('live', $config->environment(), 'generated config must still honor OpenCart mode switch.');
     assertSameValue('pk_live_zip', $config->clientConfig()->apiKey(), 'live API key must come from generated config.');
