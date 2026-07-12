@@ -16,7 +16,7 @@ For each environment, Paymos reuses the merchant's single active Payment key or 
 
 ## Secret storage
 
-Credentials and temporary device state are stored as a AES-256-GCM OpenCart setting keyed from config_encryption. Saved secrets are not rendered back into the administration page.
+Credentials and temporary device state are stored as an AES-256-GCM OpenCart setting keyed from config_encryption. Saved secrets are not rendered back into the administration page.
 
 ## Runtime
 

@@ -7,9 +7,9 @@ $_['text_reconcile_success'] = 'Paymos reconciliation completed. Orders complete
 $_['text_edit'] = 'Edit Paymos';
 $_['text_sandbox'] = 'Sandbox';
 $_['text_live'] = 'Live';
-$_['text_generated_config'] = 'Credentials are loaded from the Paymos dashboard package and are read-only in OpenCart.';
-$_['text_manual_config'] = 'Generated credentials were not found. Install the package downloaded from the Paymos dashboard or fill credentials manually.';
-$_['text_manual_credentials'] = 'Manual credentials';
+$_['text_generated_config'] = 'Credentials were delivered by Connect Paymos and are encrypted in this OpenCart installation.';
+$_['text_manual_config'] = 'This store is not connected. Click Connect Paymos and approve the current project.';
+$_['text_manual_credentials'] = 'Connection';
 $_['text_title_default'] = 'Pay with stablecoins';
 
 $_['entry_status'] = 'Status';
@@ -30,7 +30,7 @@ $_['entry_project_id'] = 'Project ID';
 $_['entry_webhook_secret'] = 'Webhook secret';
 
 $_['help_mode'] = 'Use Sandbox for test payments, then switch to Live when ready.';
-$_['help_webhook_url'] = 'Paymos dashboard registers this URL automatically when the plugin package is generated.';
+$_['help_webhook_url'] = 'Paymos registers this URL automatically for Sandbox and Live when you connect the store.';
 
 $_['button_reconcile'] = 'Reconcile Paymos orders';
 $_['button_confirm'] = 'Pay with Paymos';
