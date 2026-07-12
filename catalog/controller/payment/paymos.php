@@ -107,21 +107,15 @@ class Paymos extends \Opencart\System\Engine\Controller
             'payment_paymos_paid_status_id',
             'payment_paymos_failed_status_id',
             'payment_paymos_cancelled_status_id',
-            'payment_paymos_api_base_url',
-            'payment_paymos_sandbox_api_key',
-            'payment_paymos_sandbox_api_secret',
-            'payment_paymos_sandbox_project_id',
-            'payment_paymos_sandbox_webhook_secret',
-            'payment_paymos_live_api_key',
-            'payment_paymos_live_api_secret',
-            'payment_paymos_live_project_id',
-            'payment_paymos_live_webhook_secret',
         ];
 
         $settings = [];
         foreach ($keys as $key) {
             $settings[$key] = $this->config->get($key);
         }
+
+        $settings['payment_paymos_credentials'] = $this->config->get('payment_paymos_credentials');
+        $settings['payment_paymos_encryption_key'] = $this->config->get('config_encryption');
 
         return $settings;
     }

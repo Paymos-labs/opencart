@@ -65,7 +65,7 @@ function assertContainsValue($needle, $haystack, $message)
 
 function opencart_settings(array $overrides = array())
 {
-    return array_merge(array(
+    $settings = array_merge(array(
         'payment_paymos_mode' => 'sandbox',
         'payment_paymos_status' => '1',
         'payment_paymos_title' => 'Pay with stablecoins',
@@ -85,6 +85,27 @@ function opencart_settings(array $overrides = array())
         'payment_paymos_failed_status_id' => '10',
         'payment_paymos_cancelled_status_id' => '7',
     ), $overrides);
+
+    PaymosOpenCart\Config::useConfigForTests(array(
+        'environments' => array(
+            'sandbox' => array(
+                'base_url' => (string) $settings['payment_paymos_api_base_url'],
+                'api_key' => (string) $settings['payment_paymos_sandbox_api_key'],
+                'api_secret' => (string) $settings['payment_paymos_sandbox_api_secret'],
+                'project_id' => (string) $settings['payment_paymos_sandbox_project_id'],
+                'webhook_secret' => (string) $settings['payment_paymos_sandbox_webhook_secret'],
+            ),
+            'live' => array(
+                'base_url' => (string) $settings['payment_paymos_api_base_url'],
+                'api_key' => (string) $settings['payment_paymos_live_api_key'],
+                'api_secret' => (string) $settings['payment_paymos_live_api_secret'],
+                'project_id' => (string) $settings['payment_paymos_live_project_id'],
+                'webhook_secret' => (string) $settings['payment_paymos_live_webhook_secret'],
+            ),
+        ),
+    ));
+
+    return $settings;
 }
 
 function opencart_order(array $overrides = array())
@@ -110,6 +131,7 @@ function opencart_invoice_event($eventId, $eventType, $status, array $overrides 
     return array_replace_recursive(array(
         'event_id' => $eventId,
         'event_type' => $eventType,
+        'version' => 1,
         'occurred_at' => 1709000000,
         'data' => array(
             'invoice_id' => 'inv_123',
@@ -127,11 +149,6 @@ function opencart_invoice_event($eventId, $eventType, $status, array $overrides 
 
 function paymos_opencart_reset_test_state()
 {
-    $config = PAYMOS_OPENCART_LIBRARY_DIR . 'paymos-config.php';
-    if (is_file($config)) {
-        unlink($config);
-    }
-
     if (class_exists('PaymosOpenCart\\Config') && method_exists('PaymosOpenCart\\Config', 'resetForTests')) {
         PaymosOpenCart\Config::resetForTests();
     }
@@ -139,11 +156,8 @@ function paymos_opencart_reset_test_state()
 
 function paymos_opencart_write_generated_config($php)
 {
-    file_put_contents(PAYMOS_OPENCART_LIBRARY_DIR . 'paymos-config.php', "<?php\n\nreturn " . $php . ";\n");
-
-    if (class_exists('PaymosOpenCart\\Config') && method_exists('PaymosOpenCart\\Config', 'resetForTests')) {
-        PaymosOpenCart\Config::resetForTests();
-    }
+    $config = eval('return ' . $php . ';');
+    PaymosOpenCart\Config::useConfigForTests(is_array($config) ? $config : array());
 }
 
 final class FakeOpenCartAdapter implements PaymosOpenCart\OpenCartAdapterInterface

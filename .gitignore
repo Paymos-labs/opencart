@@ -11,4 +11,3 @@ Thumbs.db
 *.swp
 *.ocmod.zip
 .phpunit.result.cache
-system/library/paymos/paymos-config.php
