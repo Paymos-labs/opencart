@@ -6,6 +6,12 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 The public release history also lives at [paymos.io/changelog](https://paymos.io/changelog).
 
+## [1.1.1] - 2026-08-02
+
+- fix(ecosystem): recover SDK releases
+- chore: bundle Paymos PHP SDK v1.2.1
+- chore: rebuild canonical CMS package
+
 ## [1.1.0] - 2026-07-21
 
 - feat(docs): make the developer surface consumable by LLM agents
