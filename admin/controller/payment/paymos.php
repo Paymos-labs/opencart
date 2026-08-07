@@ -34,7 +34,7 @@ class Paymos extends \Opencart\System\Engine\Controller
         $data['connect_start'] = $this->url->link('extension/paymos/payment/paymos.connectStart', 'user_token=' . $this->session->data['user_token']);
         $data['connect_poll'] = $this->url->link('extension/paymos/payment/paymos.connectPoll', 'user_token=' . $this->session->data['user_token']);
         $data['back'] = $this->url->link('marketplace/extension', 'user_token=' . $this->session->data['user_token'] . '&type=payment');
-        $data['webhook_url'] = rtrim((string) $this->config->get('config_url'), '/') . '/index.php?route=extension/paymos/payment/paymos.callback';
+        $data['webhook_url'] = $this->storeUrl() . '/index.php?route=extension/paymos/payment/paymos.callback';
         $data['generated_config'] = trim((string) $this->config->get('payment_paymos_credentials')) !== '';
 
         $this->load->model('localisation/order_status');
@@ -238,9 +238,43 @@ class Paymos extends \Opencart\System\Engine\Controller
         return new \Paymos\Connect\DeviceConnectClient('https://app.paymos.io');
     }
 
+    /**
+     * The storefront root, as Paymos must see it.
+     *
+     * `config_url` is only editable in the ADDITIONAL-stores form; OpenCart never
+     * writes it for the default store and offers no field for it there, so on a
+     * normal single-store install it is simply absent. Reading only that setting
+     * left the source URL empty, which made connecting impossible and rendered the
+     * webhook address on this page without a host. `HTTP_CATALOG` is defined by
+     * OpenCart's own admin/config.php on every install and is exactly the
+     * storefront root, so it is the reliable source; `config_url` still wins when a
+     * merchant has deliberately set it.
+     */
+    private function storeUrl(): string
+    {
+        $url = trim((string) $this->config->get('config_url'));
+        if ($url === '' && defined('HTTP_CATALOG')) {
+            $url = (string) HTTP_CATALOG;
+        }
+
+        return rtrim($url, '/');
+    }
+
     private function sourceUrl(): string
     {
-        return rtrim((string) $this->config->get('config_url'), '/');
+        $url = $this->storeUrl();
+        if (stripos($url, 'https://') !== 0) {
+            // Say what to fix. Paymos rejects a non-HTTPS store, and its own error
+            // ("CMS and HTTPS store URL are required") does not tell the merchant
+            // which of their settings is at fault.
+            throw new \RuntimeException(
+                'Paymos needs this store to be reachable over HTTPS. Serve the storefront over HTTPS'
+                . ' and make sure the store URL in your OpenCart config.php uses https://'
+                . ($url === '' ? '' : ' (currently "' . $url . '").')
+            );
+        }
+
+        return $url;
     }
 
     private function encryptionKey(): string
