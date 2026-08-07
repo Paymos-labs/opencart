@@ -125,14 +125,34 @@ document.getElementById('button-paymos-reconcile').addEventListener('click', fun
 document.getElementById('button-paymos-connect').addEventListener('click', function () {
   var button = this;
   var status = document.getElementById('paymos-connect-status');
+  var manual = false;
   button.disabled = true;
   status.textContent = 'Starting secure connection…';
-  fetch('{{ connect_start }}', {method: 'POST', headers: {'X-Requested-With': 'XMLHttpRequest'}})
+  // Opened synchronously: browsers only honour window.open for a few seconds after the
+  // click, so opening it once the start request resolves is blocked on slow connections.
+  // No feature string — any feature string asks for a popup, which blockers reject.
+  var tab = window.open('', '_blank');
+  if (tab) { try { tab.opener = null; } catch (error) {} }
+  var body = new URLSearchParams({paymos_return_url: window.location.href});
+  fetch('{{ connect_start }}', {method: 'POST', headers: {'X-Requested-With': 'XMLHttpRequest', 'Content-Type': 'application/x-www-form-urlencoded'}, body: body.toString()})
     .then(function (response) { return response.json(); })
     .then(function (json) {
       if (json.error) throw new Error(json.error);
-      window.open(json.success.verification_url, '_blank', 'noopener,noreferrer');
-      status.textContent = 'Waiting for approval. Code: ' + json.success.user_code;
+      if (tab && !tab.closed) {
+        tab.location = json.success.verification_url;
+        status.textContent = 'Waiting for approval. Code: ' + json.success.user_code;
+      } else {
+        manual = true;
+        status.textContent = '';
+        var link = document.createElement('a');
+        link.href = json.success.verification_url;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+        link.textContent = 'Open the approval page';
+        status.appendChild(document.createTextNode('Your browser blocked the approval tab. '));
+        status.appendChild(link);
+        status.appendChild(document.createTextNode(' Code: ' + json.success.user_code));
+      }
       var interval = Math.max(1, Number(json.success.interval || 5)) * 1000;
       window.setTimeout(function poll() {
         fetch('{{ connect_poll }}', {method: 'POST', headers: {'X-Requested-With': 'XMLHttpRequest'}})
@@ -141,9 +161,18 @@ document.getElementById('button-paymos-connect').addEventListener('click', funct
             if (result.error) throw new Error(result.error);
             if (result.success.status === 'connected') { window.location.reload(); return; }
             window.setTimeout(poll, result.success.status === 'slow_down' ? interval + 5000 : interval);
-          }).catch(function (error) { status.textContent = error.message; button.disabled = false; });
+          }).catch(function (error) {
+            // Never clobber the manual approval link and code: they are the merchant's
+            // only remaining way to finish once the tab was blocked.
+            if (!manual) { status.textContent = error.message; }
+            button.disabled = false;
+          });
       }, interval);
-    }).catch(function (error) { status.textContent = error.message; button.disabled = false; });
+    }).catch(function (error) {
+      if (tab && !tab.closed) { tab.close(); }
+      status.textContent = error.message;
+      button.disabled = false;
+    });
 });
 </script>
 {{ footer }}
