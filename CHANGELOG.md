@@ -6,6 +6,10 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 The public release history also lives at [paymos.io/changelog](https://paymos.io/changelog).
 
+## [1.2.1] - 2026-08-07
+
+- chore: bundle Paymos PHP SDK v1.3.1
+
 ## [1.2.0] - 2026-08-06
 
 - feat(locales): Spanish blog and plugin catalogs
