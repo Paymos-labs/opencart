@@ -106,7 +106,12 @@ class Paymos extends \Opencart\System\Engine\Controller
     public function connectStart(): void
     {
         $this->connectResponse(function (): array {
-            $state = $this->connectClient()->start('opencart', $this->sourceUrl());
+            // The admin page posts its own URL so approval can return the merchant to it.
+            // Paymos drops it unless it shares an origin with the store URL.
+            $returnUrl = isset($this->request->post['paymos_return_url'])
+                ? (string) $this->request->post['paymos_return_url']
+                : '';
+            $state = $this->connectClient()->start('opencart', $this->sourceUrl(), $returnUrl);
             $this->saveProtected('payment_paymos_connect_state', array(
                 'schema' => 1,
                 'expires_at' => time() + (int) $state['expires_in'],
@@ -251,7 +256,15 @@ class Paymos extends \Opencart\System\Engine\Controller
     {
         $encoded = \Paymos\Plugin\AesGcmEnvelope::seal($payload, $this->encryptionKey(), $aad);
         $this->load->model('setting/setting');
-        $this->model_setting_setting->editValue('payment_paymos', $setting, $encoded);
+
+        // editValue() is a bare UPDATE and cannot insert. On a freshly installed
+        // extension there are no payment_paymos rows yet, so it silently wrote
+        // nothing — the connect state vanished and polling answered "No active
+        // Paymos connection request" forever, with no way for the merchant to
+        // finish connecting. Re-saving the whole group inserts what is missing.
+        $settings = $this->model_setting_setting->getSetting('payment_paymos');
+        $settings[$setting] = $encoded;
+        $this->model_setting_setting->editSetting('payment_paymos', $settings);
     }
 
     private function loadProtected(string $setting, string $aad): array
