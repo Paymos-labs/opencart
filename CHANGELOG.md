@@ -6,6 +6,10 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 The public release history also lives at [paymos.io/changelog](https://paymos.io/changelog).
 
+## [1.2.5] - 2026-08-08
+
+- chore: bundle Paymos PHP SDK v1.3.2
+
 ## [1.2.4] - 2026-08-07
 
 - fix(opencart): make the payment path work on OpenCart 4 at all
