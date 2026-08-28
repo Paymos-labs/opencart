@@ -6,6 +6,23 @@ this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 The public release history also lives at [paymos.io/changelog](https://paymos.io/changelog).
 
+## [Unreleased]
+
+## [1.2.7] - 2026-08-28
+
+- release: the changelog rot had a cause, and it was not the one I named
+- audit: the shipped plugin and SDK docs described a product we stopped shipping
+- docs(plugins): eight README stubs become the front pages they already were
+- docs(plugins): the changelogs stopped in June and the audit never reached them
+- chore: bundle Paymos PHP SDK v1.4.0
+- chore: rebuild canonical CMS package
+
+### Changed
+- The release asset is `paymos.ocmod.zip`. OpenCart derives the extension
+  directory — and with it the PHP namespace of every controller — from the
+  uploaded file name, so a versioned name installed into a directory nothing in
+  the package could address.
+
 ## [1.2.6] - 2026-08-08
 
 - fix(plugins): make the six shipped locales actually reach the merchant
