@@ -33,7 +33,7 @@ final class CallbackProcessor
         OpenCartAdapterInterface $opencart,
         InvoiceStoreInterface $invoiceStore,
         EventStoreInterface $eventStore,
-        callable $clientFactory = null
+        ?callable $clientFactory = null
     ) {
         $this->opencart = $opencart;
         $this->invoiceStore = $invoiceStore;

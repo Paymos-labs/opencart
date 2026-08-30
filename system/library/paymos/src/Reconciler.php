@@ -18,7 +18,7 @@ final class Reconciler
     /** @var callable|null */
     private $clientFactory;
 
-    public function __construct(InvoiceStoreInterface $store, OpenCartAdapterInterface $opencart, callable $clientFactory = null)
+    public function __construct(InvoiceStoreInterface $store, OpenCartAdapterInterface $opencart, ?callable $clientFactory = null)
     {
         $this->store = $store;
         $this->opencart = $opencart;
