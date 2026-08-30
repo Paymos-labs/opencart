@@ -1,8 +1,38 @@
 <?php
 
 declare(strict_types=1);
+require __DIR__ . '/stubs/engine.php';
+
+// OpenCart defines these before controller files load. Controllers resolve the
+// SDK autoloader through DIR_EXTENSION . 'paymos/...', so mirror the platform's
+// extension layout with a temp symlink named after the extension directory.
+if (!defined('DIR_APPLICATION')) {
+    define('DIR_APPLICATION', __DIR__ . '/');
+}
+if (!defined('DIR_EXTENSION')) {
+    $_extRoot = rtrim(sys_get_temp_dir(), '/\\') . '/paymos-opencart-extension-tests/';
+    if (!is_dir($_extRoot)) {
+        mkdir($_extRoot, 0777, true);
+    }
+    if (!is_link($_extRoot . 'paymos') && !file_exists($_extRoot . 'paymos')) {
+        symlink(dirname(__DIR__), $_extRoot . 'paymos');
+    }
+    define('DIR_EXTENSION', $_extRoot);
+    unset($_extRoot);
+}
 
 define('PAYMOS_OPENCART_PLUGIN_DIR', dirname(__DIR__) . DIRECTORY_SEPARATOR);
+
+// Any deprecation, notice or warning inside plugin code must fail the run:
+// platform installers (Magento DI compile above all) escalate PHP 8.4+
+// deprecations to fatals, and a silent one here is how rejections slip through.
+error_reporting(E_ALL);
+set_error_handler(static function ($severity, $message, $file, $line) {
+    if (!(error_reporting() & $severity)) {
+        return false;
+    }
+    throw new ErrorException($message, 0, $severity, $file, $line);
+});
 define('PAYMOS_OPENCART_LIBRARY_DIR', PAYMOS_OPENCART_PLUGIN_DIR . 'system/library/paymos/');
 
 spl_autoload_register(static function ($class) {
