@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace PaymosOpenCart;
 
 use Paymos\Client;
+use Paymos\Plugin\AmountGuard;
 use Paymos\Plugin\StatusMapper;
 
 final class Reconciler
@@ -68,7 +69,7 @@ final class Reconciler
     {
         return $this->matches((string) $row['project_id'], $this->field($invoice, array('project_id')))
             && $this->matches((string) $row['external_order_id'], $this->field($invoice, array('order', 'external_id')))
-            && $this->matches((string) $row['amount'], $this->field($invoice, array('order', 'amount')))
+            && $this->amountMatches((string) $row['amount'], $this->field($invoice, array('order', 'amount')))
             && $this->matches(strtoupper((string) $row['currency']), strtoupper($this->field($invoice, array('order', 'currency'))))
             && StatusMapper::invoiceAction('', $this->field($invoice, array('status'))) !== StatusMapper::ACTION_IGNORE;
     }
@@ -79,6 +80,19 @@ final class Reconciler
         $actual = trim((string) $actual);
 
         return $expected === '' || $actual === '' || $expected === $actual;
+    }
+
+    /**
+     * Decimal-safe: the server echoes a fiat amount at the currency's own scale
+     * ("2500" for JPY, "33.100" for KWD) while an older snapshot may hold
+     * "2500.00" — the same amount, which a string compare skipped on every run.
+     */
+    private function amountMatches($expected, $actual)
+    {
+        $expected = trim((string) $expected);
+        $actual = trim((string) $actual);
+
+        return $expected === '' || $actual === '' || AmountGuard::amountsEqual($expected, $actual);
     }
 
     /**

@@ -6,6 +6,7 @@ namespace PaymosOpenCart;
 
 use Paymos\Client;
 use Paymos\Exception\DuplicateEventException;
+use Paymos\Exception\EventInProgressException;
 use Paymos\Exception\SignatureMismatchException;
 use Paymos\Exception\TimestampSkewException;
 use Paymos\Plugin\AmountGuard;
@@ -66,6 +67,12 @@ final class CallbackProcessor
         } catch (DuplicateEventException $e) {
             $this->opencart->log('Paymos duplicate webhook ignored.', array('duplicate' => true));
             return new CallbackResult(200, 'OK', true);
+        } catch (EventInProgressException $e) {
+            // Another delivery of this event holds the lock and has not finished.
+            // Not a duplicate: a 2xx would mark it delivered even if that delivery
+            // then fails. 409 makes the server retry; the lock is not ours to drop.
+            $this->opencart->log('Paymos webhook is still being processed by another delivery.', array('in_progress' => true));
+            return new CallbackResult(409, 'In progress');
         } catch (SignatureMismatchException $e) {
             return new CallbackResult(401, 'Bad signature');
         } catch (TimestampSkewException $e) {
@@ -155,8 +162,11 @@ final class CallbackProcessor
         // a late cancelled/expired/underpaid after the order is already paid) must
         // never downgrade a paid order. Reverse-verify covers forgery, not delivery
         // order — this is the second line for that.
+        $rowIsFinal = StatusMapper::isFinalStatus(isset($row['status']) ? (string) $row['status'] : '');
         if ($this->wouldRollBackPaidOrder($config, $order, $action)) {
-            $this->invoiceStore->updateStatus($event->invoiceId(), $event->status());
+            if (!$rowIsFinal) {
+                $this->invoiceStore->updateStatus($event->invoiceId(), $event->status());
+            }
             $this->opencart->addOrderHistory(
                 (int) $row['opencart_order_id'],
                 (int) $this->scalar($order, 'order_status_id', $config->statusId('paid')),
@@ -166,8 +176,25 @@ final class CallbackProcessor
             return false;
         }
 
+        // Nothing leaves a final status on the server (Invoice.IsTerminal), so an
+        // event that arrives after one is an out-of-order redelivery. The paid
+        // guard above only knows the configured paid status: a Failed order, or a
+        // paid one the merchant already moved on to Shipped/Complete, was pulled
+        // back by a stale underpaid_waiting or confirming. The recorded invoice
+        // status is what decides; it stays final.
+        if ($rowIsFinal) {
+            $this->opencart->log('Paymos ignored an invoice status that arrived after a final one.', array(
+                'invoice' => $event->invoiceId(),
+                'final_status' => (string) $row['status'],
+                'event_type' => $event->type(),
+            ));
+            return false;
+        }
+
         if ($action === StatusMapper::ACTION_PAYMENT_COMPLETE) {
-            $currentAmount = $this->formatAmount($this->scalar($order, 'total', $row['amount']));
+            // The order total in the ORDER currency — the same conversion the
+            // invoice was cut with (OrderAmount), never the base-currency `total`.
+            $currentAmount = $this->opencart->orderAmount($order);
             $currentCurrency = strtoupper($this->scalar($order, 'currency_code', $row['currency']));
             if (!AmountGuard::isSafeToComplete(
                 $row['amount'],
@@ -419,11 +446,6 @@ final class CallbackProcessor
         return isset($source[$key]) && is_scalar($source[$key]) && trim((string) $source[$key]) !== ''
             ? trim((string) $source[$key])
             : (string) $fallback;
-    }
-
-    private function formatAmount($value)
-    {
-        return number_format((float) $value, 2, '.', '');
     }
 
     private function commitEvent()

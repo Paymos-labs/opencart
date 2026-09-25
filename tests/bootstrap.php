@@ -229,4 +229,51 @@ final class FakeOpenCartAdapter implements PaymosOpenCart\OpenCartAdapterInterfa
             'context' => $context,
         );
     }
+
+    public function orderAmount(array $order)
+    {
+        return PaymosOpenCart\OrderAmount::inOrderCurrency($order, new FakeOpenCartCurrency());
+    }
+}
+
+/**
+ * The parts of OpenCart 4's \Opencart\System\Library\Cart\Currency the plugin
+ * relies on, with the platform's own arithmetic: format($number, $code,
+ * $value, false) multiplies the base-currency figure by $value (or by the
+ * currency's current rate when $value is 0) and rounds to the currency's
+ * decimal places. Base currency here is EUR.
+ */
+final class FakeOpenCartCurrency
+{
+    /** @var array<string, array{value: float, decimal_place: int}> */
+    public $currencies = array(
+        'EUR' => array('value' => 1.0, 'decimal_place' => 2),
+        'USD' => array('value' => 1.0, 'decimal_place' => 2),
+        'GBP' => array('value' => 0.85, 'decimal_place' => 2),
+        'JPY' => array('value' => 160.0, 'decimal_place' => 0),
+        'KWD' => array('value' => 0.331, 'decimal_place' => 3),
+    );
+
+    public function format(float $number, string $currency, float $value = 0, bool $format = true)
+    {
+        if (!isset($this->currencies[$currency])) {
+            return '';
+        }
+        if (!$value) {
+            $value = $this->currencies[$currency]['value'];
+        }
+        $amount = round($value ? $number * $value : $number, $this->currencies[$currency]['decimal_place']);
+
+        return $format ? number_format($amount, $this->currencies[$currency]['decimal_place']) . ' ' . $currency : $amount;
+    }
+
+    public function getDecimalPlace(string $currency): int
+    {
+        return isset($this->currencies[$currency]) ? $this->currencies[$currency]['decimal_place'] : 0;
+    }
+
+    public function has(string $currency): bool
+    {
+        return isset($this->currencies[$currency]);
+    }
 }
