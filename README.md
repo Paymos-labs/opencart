@@ -15,7 +15,7 @@ workflow the store already runs instead of imposing one.
 ## Requirements
 
 - OpenCart 4.0.2.0 or later; the extension will not install on 4.0.0.0–4.0.1.1;
-- PHP 7.4 or later with the `curl`, `hash`, `json` and `openssl` extensions;
+- PHP 8.0 or later with the `curl`, `hash`, `json` and `openssl` extensions;
 - a Store URL on HTTPS that the public internet can reach;
 - a Paymos account, with the project this store should bill into already open in the dashboard.
 
