@@ -1,6 +1,6 @@
 # Paymos for OpenCart
 
-Official Paymos payment extension for OpenCart 4. The shopper confirms the order,
+Official Paymos payment extension for OpenCart 4.0.2.0 and later. The shopper confirms the order,
 lands on the hosted Paymos checkout, and pays in whichever token and network your
 project enables — Tron, Ethereum, BSC, Solana and the rest of the supported set.
 Your OpenCart order then moves on its own, driven by a signed callback rather than
@@ -14,7 +14,7 @@ workflow the store already runs instead of imposing one.
 
 ## Requirements
 
-- OpenCart 4;
+- OpenCart 4.0.2.0 or later; the extension will not install on 4.0.0.0–4.0.1.1;
 - PHP 7.4 or later with the `curl`, `hash`, `json` and `openssl` extensions;
 - a Store URL on HTTPS that the public internet can reach;
 - a Paymos account, with the project this store should bill into already open in the dashboard.
@@ -129,6 +129,11 @@ guards, then tells you how many orders it moved. Use it after an outage, or when
 an order looks stuck.
 
 ## Troubleshooting
+
+**Paymos does not stay installed.** The store runs an OpenCart release before
+4.0.2.0. The extension removes itself, creates none of its tables, and leaves a
+`[Paymos] Installation refused` line naming the version it found in the OpenCart
+error log. Update OpenCart, then install Paymos again.
 
 **Connect says the store must be reachable over HTTPS.** A freshly installed
 OpenCart can have an empty store URL, in which case the catalog URL is used

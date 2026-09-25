@@ -13,9 +13,12 @@ namespace Opencart\System\Engine {
                 $this->registry = $registry;
             }
 
+            // Like the real engine: controllers read the registry.
             public function __get($key)
             {
-                return null;
+                return is_object($this->registry) && method_exists($this->registry, 'get')
+                    ? $this->registry->get($key)
+                    : null;
             }
         }
     }

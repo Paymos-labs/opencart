@@ -59,7 +59,7 @@ class Paymos extends \Opencart\System\Engine\Controller
                 $json['redirect'] = $result['payment_url'];
             } catch (\Throwable $e) {
                 $this->log->write('[Paymos] Checkout failed: ' . $e->getMessage());
-                $json['error'] = $this->language->get('error_checkout');
+                $json['error'] = $this->language->get(\PaymosOpenCart\GatewayCheckout::buyerErrorKey($e));
             }
         }
 

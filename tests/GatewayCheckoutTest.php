@@ -114,6 +114,7 @@ function test_opencart_gateway_checkout_renews_invoice_when_amount_changes()
         'renew_count' => 0,
     ));
     $transport = new MockTransport(array(
+        opencart_live_invoice_response('inv_old', 'cancelled', time() + 600),
         new HttpResponse(200, json_encode(array(
             'invoice_id' => 'inv_new',
             'status' => 'created',
@@ -130,7 +131,13 @@ function test_opencart_gateway_checkout_renews_invoice_when_amount_changes()
     $row = $store->findByOpenCartOrderId(42);
     assertSameValue('inv_new', $row['paymos_invoice_id'], 'amount change must create a fresh Paymos invoice.');
     assertSameValue('oc_42_1', $row['external_order_id'], 'renewed invoice must increment external order id.');
-    assertSameValue(1, count($transport->requests()), 'renewed invoice must call Paymos API.');
+    // BUG-166: the old invoice is cancelled on the server first, or the buyer
+    // could pay both.
+    $requests = $transport->requests();
+    assertSameValue(2, count($requests), 'the old invoice is cancelled, then the new one created.');
+    assertSameValue('https://api.paymos.test/v1/invoices/inv_old/cancel', $requests[0]['url'], 'the old invoice is cancelled first.');
+    assertSameValue('https://api.paymos.test/v1/invoices', $requests[1]['url'], 'the new invoice is created after the cancel.');
+    assertSameValue('cancelled', $store->findByExternalOrderId('oc_42_0')['status'], 'the old row records the cancel, so its cancelled webhook is ignored as stale.');
 }
 
 function test_opencart_gateway_checkout_invoices_the_amount_the_buyer_saw_in_the_order_currency()
@@ -248,6 +255,7 @@ function test_opencart_gateway_checkout_renews_an_invoice_that_expired_on_the_se
     $store = opencart_store_with_existing_link('awaiting_client');
     $transport = new MockTransport(array(
         opencart_live_invoice_response('inv_existing', 'awaiting_client', time() - 3600),
+        opencart_live_invoice_response('inv_existing', 'cancelled', time() - 3600),
         new HttpResponse(201, json_encode(array(
             'invoice_id' => 'inv_fresh',
             'status' => 'awaiting_client',
@@ -262,6 +270,10 @@ function test_opencart_gateway_checkout_renews_an_invoice_that_expired_on_the_se
 
     assertSameValue('https://checkout.paymos.test/fresh', $result['payment_url'], 'an expired invoice must be replaced by a fresh one.');
     assertSameValue('oc_42_1', $store->findByOpenCartOrderId(42)['external_order_id'], 'the fresh invoice needs a new external order id.');
+    // Past its deadline but not yet flipped by the server's expiry job: it is
+    // still awaiting_client there, so it is cancelled before the replacement.
+    assertSameValue(array('GET', 'POST', 'POST'), array_column($transport->requests(), 'method'), 'read, cancel, create.');
+    assertSameValue('https://api.paymos.test/v1/invoices/inv_existing/cancel', $transport->requests()[1]['url'], 'the stale invoice is cancelled before the replacement.');
 }
 
 function test_opencart_gateway_checkout_renews_without_a_lookup_when_the_invoice_is_already_final()
@@ -317,4 +329,181 @@ function test_opencart_gateway_checkout_keeps_an_invoice_the_server_holds_open_p
         assertSameValue(1, count($transport->requests()), $status . ': one lookup and no new invoice.');
         assertSameValue('oc_42_0', $store->findByOpenCartOrderId(42)['external_order_id'], $status . ': the external order id is not bumped.');
     }
+}
+
+function opencart_cannot_cancel($status)
+{
+    return new HttpResponse(409, json_encode(array(
+        'type' => 'https://paymos.io/errors/invoice_cannot_be_cancelled',
+        'title' => 'Conflict',
+        'status' => 409,
+        'detail' => 'Invoice cannot be cancelled in status ' . $status . '. Only invoices awaiting client can be cancelled.',
+        'code' => 'invoice_cannot_be_cancelled',
+    )), array('Content-Type' => 'application/problem+json'));
+}
+
+function opencart_not_found()
+{
+    return new HttpResponse(404, json_encode(array(
+        'type' => 'https://paymos.io/errors/not_found',
+        'title' => 'Not Found',
+        'status' => 404,
+        'detail' => 'Invoice not found.',
+        'code' => 'not_found',
+    )), array('Content-Type' => 'application/problem+json'));
+}
+
+function opencart_start_expecting_block(GatewayCheckout $checkout)
+{
+    try {
+        $checkout->start(42, opencart_settings());
+    } catch (\Paymos\Plugin\InvoiceReplacementBlockedException $e) {
+        return $e;
+    }
+
+    throw new RuntimeException('checkout must refuse to replace an invoice it cannot prove closed.');
+}
+
+function test_opencart_gateway_checkout_does_not_replace_an_invoice_the_buyer_can_still_pay()
+{
+    // BUG-166: the order total changed while the buyer had already picked a
+    // network on the old invoice. The server refuses the cancel (only
+    // awaiting_client is cancellable) and the old invoice stays payable, so a
+    // second one would invite a second payment.
+    foreach (array('awaiting_payment', 'confirming', 'underpaid_waiting', 'paid') as $status) {
+        $store = opencart_store_with_existing_link('awaiting_client');
+        $transport = new MockTransport(array(
+            opencart_cannot_cancel($status),
+            opencart_live_invoice_response('inv_existing', $status, time() + 600),
+        ));
+        $client = new Client(new ClientConfig('pk_test_123', 'sk_test_123', 'https://api.paymos.test'), $transport);
+        $adapter = new FakeOpenCartAdapter();
+        $adapter->orders[42] = opencart_order(array('total' => '120.00'));
+
+        $e = opencart_start_expecting_block(new GatewayCheckout($store, $adapter, static function () use ($client) {
+            return $client;
+        }));
+
+        assertSameValue($status, $e->result()->status(), $status . ': the blocking status is reported.');
+        assertSameValue(array('POST', 'GET'), array_column($transport->requests(), 'method'), $status . ': cancel, read, and no create.');
+        $row = $store->findByOpenCartOrderId(42);
+        assertSameValue('inv_existing', $row['paymos_invoice_id'], $status . ': the old invoice stays the order\'s invoice.');
+        assertSameValue('awaiting_client', $row['status'], $status . ': an open or paid status read here is not recorded (the webhook records it).');
+        assertSameValue(1, count($adapter->histories), $status . ': the order is routed to manual review.');
+        assertSameValue(2, $adapter->histories[0]['order_status_id'], $status . ': manual review uses the confirming (hold) status, as the callback does.');
+        assertContainsValue('manual review', $adapter->histories[0]['comment'], $status . ': the note says manual review.');
+        assertContainsValue('inv_existing', $adapter->histories[0]['comment'], $status . ': the note names the old invoice.');
+    }
+}
+
+function test_opencart_gateway_checkout_does_not_replace_an_invoice_the_server_answers_404_for()
+{
+    // A 404 is the same for a missing invoice and for one these credentials may
+    // not read (another account after a reconnect, another environment). The
+    // plugin only stores ids the server issued, so it is never proof of "gone".
+    $store = opencart_store_with_existing_link('awaiting_client');
+    $transport = new MockTransport(array(opencart_not_found()));
+    $client = new Client(new ClientConfig('pk_test_123', 'sk_test_123', 'https://api.paymos.test'), $transport);
+    $adapter = new FakeOpenCartAdapter();
+    $adapter->orders[42] = opencart_order(array('total' => '120.00'));
+
+    $e = opencart_start_expecting_block(new GatewayCheckout($store, $adapter, static function () use ($client) {
+        return $client;
+    }));
+
+    assertSameValue(\Paymos\Plugin\InvoiceReplacementResult::REASON_NOT_FOUND, $e->result()->reason(), 'the 404 is the reason.');
+    assertSameValue(1, count($transport->requests()), 'no invoice is created after a 404.');
+    assertSameValue(1, count($adapter->histories), 'the order is routed to manual review.');
+}
+
+function test_opencart_gateway_checkout_does_not_renew_when_the_lookup_answers_404()
+{
+    // Same amount, but the read of the live invoice answers 404. Before
+    // BUG-166 that cut a new invoice; now it is handed to the replacement,
+    // which refuses it.
+    $store = opencart_store_with_existing_link('awaiting_client');
+    $transport = new MockTransport(array(opencart_not_found(), opencart_not_found()));
+    $client = new Client(new ClientConfig('pk_test_123', 'sk_test_123', 'https://api.paymos.test'), $transport);
+    $adapter = new FakeOpenCartAdapter();
+
+    opencart_start_expecting_block(new GatewayCheckout($store, $adapter, static function () use ($client) {
+        return $client;
+    }));
+
+    assertSameValue(array('GET', 'POST'), array_column($transport->requests(), 'method'), 'read, cancel attempt, and no create.');
+    assertSameValue('oc_42_0', $store->findByOpenCartOrderId(42)['external_order_id'], 'no new external order id is cut.');
+}
+
+function test_opencart_gateway_checkout_replaces_an_invoice_the_server_says_ended_unpaid()
+{
+    $store = opencart_store_with_existing_link('awaiting_client');
+    $transport = new MockTransport(array(
+        opencart_cannot_cancel('expired'),
+        opencart_live_invoice_response('inv_existing', 'expired', time() - 3600),
+        new HttpResponse(201, json_encode(array(
+            'invoice_id' => 'inv_fresh',
+            'status' => 'awaiting_client',
+            'payment_url' => 'https://checkout.paymos.test/fresh',
+        )), array()),
+    ));
+    $client = new Client(new ClientConfig('pk_test_123', 'sk_test_123', 'https://api.paymos.test'), $transport);
+    $adapter = new FakeOpenCartAdapter();
+    $adapter->orders[42] = opencart_order(array('total' => '120.00'));
+
+    $result = (new GatewayCheckout($store, $adapter, static function () use ($client) {
+        return $client;
+    }))->start(42, opencart_settings());
+
+    assertSameValue('https://checkout.paymos.test/fresh', $result['payment_url'], 'an expired invoice may be replaced.');
+    assertSameValue('expired', $store->findByExternalOrderId('oc_42_0')['status'], 'the old row records the final status the server reported.');
+}
+
+function test_opencart_gateway_checkout_cancels_the_old_invoice_in_its_own_environment()
+{
+    // The merchant switched Sandbox → Live: the old invoice is a sandbox one
+    // and only sandbox credentials can cancel it.
+    $store = opencart_store_with_existing_link('awaiting_client');
+    $sandbox = new MockTransport(array(opencart_live_invoice_response('inv_existing', 'cancelled', time() + 600)));
+    $live = new MockTransport(array(new HttpResponse(201, json_encode(array(
+        'invoice_id' => 'inv_live',
+        'status' => 'awaiting_client',
+        'payment_url' => 'https://checkout.paymos.test/live',
+    )), array())));
+    $clients = array(
+        'sandbox' => new Client(new ClientConfig('pk_test_123', 'sk_test_123', 'https://api.paymos.test'), $sandbox),
+        'live' => new Client(new ClientConfig('pk_live_123', 'sk_live_123', 'https://api.paymos.test'), $live),
+    );
+
+    $result = (new GatewayCheckout($store, new FakeOpenCartAdapter(), static function ($config, $environment = null) use ($clients) {
+        return $clients[$environment === null ? $config->environment() : $environment];
+    }))->start(42, opencart_settings(array('payment_paymos_mode' => 'live')));
+
+    assertSameValue('https://checkout.paymos.test/live', $result['payment_url'], 'the live invoice is issued.');
+    assertSameValue(1, count($sandbox->requests()), 'the sandbox invoice is cancelled with sandbox credentials.');
+    assertSameValue('POST', $sandbox->requests()[0]['method'], 'the sandbox call is the cancel.');
+    assertSameValue(1, count($live->requests()), 'only the create goes to live.');
+}
+
+function test_opencart_checkout_asks_the_buyer_to_contact_the_store_when_the_old_invoice_may_still_be_paid()
+{
+    // BUG-180: error_checkout says "choose another payment method". When the
+    // old invoice may still be paid, that invites a second payment beside it.
+    $blocked = new \Paymos\Plugin\InvoiceReplacementBlockedException(
+        \Paymos\Plugin\InvoiceReplacementResult::blocked('inv_existing', 'awaiting_payment', \Paymos\Plugin\InvoiceReplacementResult::REASON_OPEN)
+    );
+
+    assertSameValue('error_replacement_blocked', GatewayCheckout::buyerErrorKey($blocked), 'a blocked replacement has its own message.');
+    assertSameValue('error_checkout', GatewayCheckout::buyerErrorKey(new \RuntimeException('OpenCart order was not found.')), 'every other failure keeps the generic one.');
+
+    foreach (array('en-gb', 'ru-ru', 'de-de', 'es-es', 'tr-tr', 'zh-cn') as $code) {
+        $_ = array();
+        require PAYMOS_OPENCART_PLUGIN_DIR . 'catalog/language/' . $code . '/payment/paymos.php';
+        assertTrueValue(isset($_['error_replacement_blocked']) && $_['error_replacement_blocked'] !== '', $code . ': the message is defined.');
+        if ($code === 'en-gb') {
+            assertSameValue($blocked->getMessage(), $_['error_replacement_blocked'], 'the English text is the SDK buyer message.');
+        }
+    }
+
+    $controller = (string) file_get_contents(PAYMOS_OPENCART_PLUGIN_DIR . 'catalog/controller/payment/paymos.php');
+    assertContainsValue('GatewayCheckout::buyerErrorKey($e)', $controller, 'the checkout controller picks the message by the failure.');
 }
