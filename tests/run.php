@@ -50,6 +50,7 @@ require __DIR__ . '/GatewayCheckoutTest.php';
 require __DIR__ . '/EventStoreTest.php';
 require __DIR__ . '/CallbackProcessorTest.php';
 require __DIR__ . '/ReconcilerTest.php';
+require __DIR__ . '/InstallerTest.php';
 
 $count = 0;
 

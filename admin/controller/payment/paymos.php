@@ -177,7 +177,15 @@ class Paymos extends \Opencart\System\Engine\Controller
 
     public function install(): void
     {
-        \PaymosOpenCart\Migrations::install($this->db);
+        // OpenCart 4.0.2.0 or later only (BUG-161): refuses older stores and
+        // removes the extension row core has just added.
+        $this->load->model('setting/extension');
+        \PaymosOpenCart\Installer::install(
+            $this->db,
+            $this->model_setting_extension,
+            $this->log,
+            defined('VERSION') ? (string) VERSION : ''
+        );
     }
 
     public function uninstall(): void

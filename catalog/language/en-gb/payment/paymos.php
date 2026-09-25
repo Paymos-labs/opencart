@@ -4,3 +4,4 @@ $_['heading_title'] = 'Paymos';
 $_['text_title'] = 'Pay with stablecoins';
 $_['button_confirm'] = 'Pay with Paymos';
 $_['error_checkout'] = 'Paymos is temporarily unavailable. Please choose another payment method or contact support.';
+$_['error_replacement_blocked'] = 'The store needs to review this order before payment can continue. Please contact the store.';
