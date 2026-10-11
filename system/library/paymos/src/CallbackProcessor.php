@@ -182,6 +182,32 @@ final class CallbackProcessor
         // paid one the merchant already moved on to Shipped/Complete, was pulled
         // back by a stale underpaid_waiting or confirming. The recorded invoice
         // status is what decides; it stays final.
+
+        // invoice-late-payment: money crossed the invoice's total AFTER it closed. The order keeps
+        // its decision — one order-history entry with the CURRENT status (a note, not a transition)
+        // and a per-invoice marker in the row store, before the stale-after-final guard above (a
+        // late event arrives after a terminal status by definition). addOrderHistory with the same
+        // status id and notify=false is OpenCart's native note.
+        if ($action === StatusMapper::ACTION_NOTE_PAID_LATE) {
+            if (!empty($row['paid_late_noted'])) {
+                $this->opencart->log('Paymos paid-late note already recorded.', array(
+                    'invoice' => $event->invoiceId(),
+                ));
+                return false;
+            }
+
+            $this->opencart->addOrderHistory(
+                (int) $row['opencart_order_id'],
+                (int) $this->scalar($order, 'order_status_id', $config->statusId('paid')),
+                'Paymos: payment arrived after the invoice deadline and covered the full amount. Invoice: '
+                    . $event->invoiceId(),
+                false
+            );
+            $row['paid_late_noted'] = $event->id() !== '' ? $event->id() : '1';
+            $this->invoiceStore->save($row);
+            return false;
+        }
+
         if ($rowIsFinal) {
             $this->opencart->log('Paymos ignored an invoice status that arrived after a final one.', array(
                 'invoice' => $event->invoiceId(),
@@ -190,6 +216,7 @@ final class CallbackProcessor
             ));
             return false;
         }
+
 
         if ($action === StatusMapper::ACTION_PAYMENT_COMPLETE) {
             // The order total in the ORDER currency — the same conversion the
