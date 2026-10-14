@@ -199,7 +199,7 @@ final class CallbackProcessor
             $this->opencart->addOrderHistory(
                 (int) $row['opencart_order_id'],
                 (int) $this->scalar($order, 'order_status_id', $config->statusId('paid')),
-                'Paymos: payment arrived after the invoice deadline and covered the full amount. Invoice: '
+                'Paymos: the customer finished paying for this order after the invoice closed. Check stock, then fulfil the order manually or refund the payment. Invoice: '
                     . $event->invoiceId(),
                 false
             );

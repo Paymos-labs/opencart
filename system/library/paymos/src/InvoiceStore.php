@@ -51,6 +51,12 @@ final class InvoiceStore implements InvoiceStoreInterface
             'updated_at' => $now,
         );
 
+        // The paid-late marker is written only by the callback that set it; other saves leave it alone.
+        $paidLateNoted = array_key_exists('paid_late_noted', $row)
+            ? ",
+                `paid_late_noted` = " . $this->nullable($row['paid_late_noted'])
+            : '';
+
         $existing = $this->findByExternalOrderId($data['external_order_id']);
         if (is_array($existing)) {
             $this->db->query("UPDATE `" . Migrations::table(Migrations::INVOICES_TABLE) . "` SET
@@ -63,7 +69,7 @@ final class InvoiceStore implements InvoiceStoreInterface
                 `payment_url` = '" . $this->db->escape($data['payment_url']) . "',
                 `status` = '" . $this->db->escape($data['status']) . "',
                 `renew_count` = '" . (int) $data['renew_count'] . "',
-                `updated_at` = '" . $this->db->escape($data['updated_at']) . "'
+                `updated_at` = '" . $this->db->escape($data['updated_at']) . "'" . $paidLateNoted . "
                 WHERE `external_order_id` = '" . $this->db->escape($data['external_order_id']) . "'");
             return;
         }
@@ -80,7 +86,7 @@ final class InvoiceStore implements InvoiceStoreInterface
             `status` = '" . $this->db->escape($data['status']) . "',
             `renew_count` = '" . (int) $data['renew_count'] . "',
             `created_at` = '" . $this->db->escape($now) . "',
-            `updated_at` = '" . $this->db->escape($now) . "'");
+            `updated_at` = '" . $this->db->escape($now) . "'" . $paidLateNoted);
     }
 
     public function updateStatus($paymosInvoiceId, $status)
@@ -101,6 +107,11 @@ final class InvoiceStore implements InvoiceStoreInterface
             LIMIT " . (int) $limit);
 
         return isset($query->rows) && is_array($query->rows) ? $query->rows : array();
+    }
+
+    private function nullable($value)
+    {
+        return $value === null ? 'NULL' : "'" . $this->db->escape((string) $value) . "'";
     }
 
     /**

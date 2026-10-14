@@ -55,7 +55,7 @@ function test_opencart_paid_late_notes_with_current_status_and_changes_nothing()
     assertSameValue(7, $adapter->histories[0]['order_status_id'], 'the history entry keeps the CURRENT status — not a transition.');
     assertFalseValue($adapter->histories[0]['notify'], 'the note never notifies the customer.');
     assertTrueValue(
-        strpos($adapter->histories[0]['comment'], 'arrived after the invoice deadline') !== false,
+        strpos($adapter->histories[0]['comment'], 'finished paying for this order after the invoice closed') !== false,
         'the comment names the late fact.'
     );
     assertSameValue('evt_late_1', $store->findByExternalOrderId('oc_42_0')['paid_late_noted'], 'marker records the event id.');
