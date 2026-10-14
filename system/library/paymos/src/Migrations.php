@@ -12,6 +12,22 @@ final class Migrations
     public static function ensure($db)
     {
         self::install($db);
+        self::addPaidLateNoted($db);
+    }
+
+    /**
+     * Tables created before invoice-late-payment lack the paid-late marker column. SHOW COLUMNS works on
+     * MySQL and MariaDB alike, so the ALTER runs once per store.
+     */
+    private static function addPaidLateNoted($db)
+    {
+        $table = self::table(self::INVOICES_TABLE);
+        $column = $db->query("SHOW COLUMNS FROM `" . $table . "` LIKE 'paid_late_noted'");
+        if (isset($column->num_rows) && (int) $column->num_rows > 0) {
+            return;
+        }
+
+        $db->query("ALTER TABLE `" . $table . "` ADD COLUMN `paid_late_noted` VARCHAR(128) NULL");
     }
 
     public static function install($db)
@@ -31,6 +47,7 @@ final class Migrations
             `payment_url` TEXT NOT NULL,
             `status` VARCHAR(64) NOT NULL,
             `renew_count` INT(11) UNSIGNED NOT NULL DEFAULT 0,
+            `paid_late_noted` VARCHAR(128) NULL,
             `created_at` DATETIME NULL,
             `updated_at` DATETIME NULL,
             PRIMARY KEY (`id`),
