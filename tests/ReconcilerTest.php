@@ -31,6 +31,7 @@ function test_opencart_reconciler_applies_paid_invoice_when_webhook_was_missed()
             'invoice_id' => 'inv_123',
             'project_id' => 'prj_123',
             'status' => 'paid',
+            'is_test' => true,
             'order' => array(
                 'external_id' => 'oc_42_0',
                 'amount' => '100.00',
@@ -71,6 +72,7 @@ function test_opencart_reconciler_skips_snapshot_mismatch()
             'invoice_id' => 'inv_123',
             'project_id' => 'other_project',
             'status' => 'paid',
+            'is_test' => true,
             'order' => array(
                 'external_id' => 'oc_42_0',
                 'amount' => '100.00',
@@ -113,6 +115,7 @@ function test_opencart_reconciler_compares_amounts_numerically()
             'invoice_id' => 'inv_123',
             'project_id' => 'prj_123',
             'status' => 'paid',
+            'is_test' => true,
             'order' => array('external_id' => 'oc_42_0', 'amount' => '2500', 'currency' => 'JPY'),
         )), array()),
     )));
@@ -263,6 +266,7 @@ function opencart_paid_reconcile_fixture()
             'invoice_id' => 'inv_123',
             'project_id' => 'prj_123',
             'status' => 'paid',
+            'is_test' => true,
             'order' => array('external_id' => 'oc_42_0', 'amount' => '100', 'currency' => 'USD'),
         )), array()),
     )));

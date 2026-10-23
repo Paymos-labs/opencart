@@ -31,6 +31,7 @@ function test_opencart_callback_marks_order_paid_after_verified_webhook_and_reve
             'invoice_id' => 'inv_123',
             'project_id' => 'prj_123',
             'status' => 'paid',
+            'is_test' => true,
             'order' => array(
                 'external_id' => 'oc_42_0',
                 'amount' => '100.00',
@@ -78,6 +79,7 @@ function test_opencart_callback_does_not_roll_back_paid_order_on_late_cancel()
             'invoice_id' => 'inv_123',
             'project_id' => 'prj_123',
             'status' => 'cancelled',
+            'is_test' => true,
             'order' => array('external_id' => 'oc_42_0', 'amount' => '100.00', 'currency' => 'USD'),
         )), array()),
     ));
@@ -117,6 +119,7 @@ function test_opencart_callback_holds_for_manual_review_on_amount_mismatch()
             'invoice_id' => 'inv_123',
             'project_id' => 'prj_123',
             'status' => 'paid',
+            'is_test' => true,
             'order' => array('external_id' => 'oc_42_0', 'amount' => '100.00', 'currency' => 'USD'),
         )), array()),
     ));
@@ -184,6 +187,7 @@ function test_opencart_callback_is_idempotent_for_duplicate_events()
             'invoice_id' => 'inv_123',
             'project_id' => 'prj_123',
             'status' => 'paid',
+            'is_test' => true,
             'order' => array(
                 'external_id' => 'oc_42_0',
                 'amount' => '100.00',
@@ -232,6 +236,7 @@ function test_opencart_callback_completes_a_converted_order_currency_payment()
             'invoice_id' => 'inv_123',
             'project_id' => 'prj_123',
             'status' => 'paid',
+            'is_test' => true,
             'order' => array('external_id' => 'oc_42_0', 'amount' => '108.00', 'currency' => 'USD'),
         )), array()),
     )));
