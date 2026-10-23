@@ -221,6 +221,7 @@ function opencart_live_invoice_response($invoiceId, $status, $expiresAt)
         'invoice_id' => $invoiceId,
         'project_id' => 'prj_123',
         'status' => $status,
+        'is_test' => true,
         'is_final' => in_array($status, array('paid', 'paid_over', 'underpaid', 'expired', 'cancelled'), true),
         'payment_url' => 'https://checkout.paymos.test/' . $invoiceId,
         'expires_at' => $expiresAt,
