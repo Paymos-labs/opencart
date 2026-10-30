@@ -135,6 +135,23 @@ final class Config
         return $value > 0 ? $value : 1;
     }
 
+    public function hasRefundCapability(string $environment): bool
+    {
+        $environment = $this->normalizeEnvironment($environment);
+        $encoded = $this->setting('payment_paymos_credentials');
+        $key = $this->setting('payment_paymos_encryption_key');
+        if ($encoded === '' || $key === '') {
+            return false;
+        }
+        $payload = AesGcmEnvelope::open($encoded, $key, 'paymos-opencart-credentials-v1');
+        $values = isset($payload['environments'][$environment]) ? $payload['environments'][$environment] : array();
+        return isset($values['project_id'], $values['capabilities']) && is_array($values['capabilities'])
+            && $values['project_id'] === $this->projectIdForEnvironment($environment)
+            && isset($values['refund_contract_version'], $values['refunds_enabled'])
+            && $values['refund_contract_version'] === 1 && is_bool($values['refunds_enabled'])
+            && in_array('invoice_refunds_v1', $values['capabilities'], true);
+    }
+
     public static function resetForTests()
     {
         self::$testConfig = array();

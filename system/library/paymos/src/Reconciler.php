@@ -19,11 +19,14 @@ final class Reconciler
     /** @var callable|null */
     private $clientFactory;
 
-    public function __construct(InvoiceStoreInterface $store, OpenCartAdapterInterface $opencart, ?callable $clientFactory = null)
+    private $refundAdapter;
+
+    public function __construct(InvoiceStoreInterface $store, OpenCartAdapterInterface $opencart, ?callable $clientFactory = null, ?RefundAdapter $refundAdapter = null)
     {
         $this->store = $store;
         $this->opencart = $opencart;
         $this->clientFactory = $clientFactory;
+        $this->refundAdapter = $refundAdapter;
     }
 
     /**
@@ -58,6 +61,9 @@ final class Reconciler
             }
         }
 
+        if ($this->refundAdapter !== null) {
+            $count += $this->refundAdapter->runDue(new \DateTimeImmutable('@' . $now));
+        }
         return $count;
     }
 

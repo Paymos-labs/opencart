@@ -76,6 +76,21 @@ final class OpenCartAdapter implements OpenCartAdapterInterface
         throw new \RuntimeException('OpenCart checkout order history method is unavailable.');
     }
 
+    public function prepareRefundHistory(int $orderId): void
+    {
+        $target = $this->isAdmin() ? $this->storefrontFor($orderId) : $this;
+        $target->registry->set('db', $this->registry->get('db'));
+        if ($target->registry->get('db') !== $this->registry->get('db')) {
+            throw new \RuntimeException('refund_native_connection_mismatch');
+        }
+        $config = $target->registry->get('config');
+        $order = $target->getOrder($orderId);
+        $paid = array_merge((array) $config->get('config_processing_status'), (array) $config->get('config_complete_status'));
+        if (!isset($order['order_status_id']) || !in_array((int) $order['order_status_id'], array_map('intval', $paid), true)) {
+            throw new \RuntimeException('refund_native_status_boundary_unavailable');
+        }
+    }
+
     /**
      * The model that reads an order in the application this runs in.
      *
@@ -129,7 +144,8 @@ final class OpenCartAdapter implements OpenCartAdapterInterface
             throw new \RuntimeException('OpenCart admin cannot reach the storefront order model: setting/store has no createStoreInstance (OpenCart 4.0.2.0 or later).');
         }
 
-        $storefront = new self($stores->createStoreInstance($storeId, $language));
+        $storefrontRegistry = $stores->createStoreInstance($storeId, $language);
+        $storefront = new self($storefrontRegistry);
         if ($storefront->isAdmin()) {
             throw new \RuntimeException('OpenCart createStoreInstance did not return a storefront.');
         }

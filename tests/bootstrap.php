@@ -10,7 +10,7 @@ if (!defined('DIR_APPLICATION')) {
     define('DIR_APPLICATION', __DIR__ . '/');
 }
 if (!defined('DIR_EXTENSION')) {
-    $_extRoot = rtrim(sys_get_temp_dir(), '/\\') . '/paymos-opencart-extension-tests/';
+    $_extRoot = rtrim(sys_get_temp_dir(), '/\\') . '/paymos-opencart-extension-tests-' . substr(hash('sha256', realpath(dirname(__DIR__))), 0, 16) . '/';
     if (!is_dir($_extRoot)) {
         mkdir($_extRoot, 0777, true);
     }
