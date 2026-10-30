@@ -79,7 +79,9 @@ class Paymos extends \Opencart\System\Engine\Controller
         $result = (new \PaymosOpenCart\CallbackProcessor(
             new \PaymosOpenCart\OpenCartAdapter($this->registry),
             new \PaymosOpenCart\InvoiceStore($this->db),
-            new \PaymosOpenCart\EventStore($this->db)
+            new \PaymosOpenCart\EventStore($this->db),
+            null,
+            \PaymosOpenCart\RefundAdapter::fromRegistry($this->registry, $this->settings())
         ))->handle($rawBody === false ? '' : $rawBody, $signature, $this->settings());
 
         $this->response->addHeader('Content-Type: text/plain');
@@ -90,6 +92,25 @@ class Paymos extends \Opencart\System\Engine\Controller
         // as delivered and never retry.
         http_response_code($result->statusCode());
         $this->response->setOutput($result->body());
+    }
+
+    public function refundCron(int $cronId, string $code, string $cycle, string $dateAdded, string $dateModified): void
+    {
+        if ($cronId < 1 || $code !== \PaymosOpenCart\Installer::REFUND_CRON_CODE || $cycle !== 'minute') {
+            throw new \RuntimeException('refund_cron_context_invalid');
+        }
+        \PaymosOpenCart\Migrations::ensure($this->db);
+        \PaymosOpenCart\RefundAdapter::fromRegistry($this->registry, $this->settings())->runDue(new \DateTimeImmutable('now'));
+    }
+
+    public function nativeReturnBefore(string &$route, array &$args): void
+    {
+        (new \PaymosOpenCart\NativeRefundGuard($this->db))->beforeReturn($route, $args);
+    }
+
+    public function nativeOrderHistoryBefore(string &$route, array &$args): void
+    {
+        (new \PaymosOpenCart\NativeRefundGuard($this->db))->beforeOrderHistory($args);
     }
 
     /**

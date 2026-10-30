@@ -90,6 +90,8 @@ final class Migrations
             PRIMARY KEY (`event_id`),
             KEY `expires_at` (`expires_at`)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+        Installer::ensureRefundSchema($db);
     }
 
     public static function uninstall($db)

@@ -12,6 +12,14 @@ class Paymos extends \Opencart\System\Engine\Controller
 {
     public function index(): void
     {
+        if ($this->user->hasPermission('modify', 'extension/paymos/payment/paymos')) {
+            $this->registerRefundGuards();
+            try {
+                $this->registerRefundCron();
+            } catch (\Throwable $error) {
+                $this->log->write('[Paymos] Refund cron registration failed: ' . $error->getMessage());
+            }
+        }
         $this->load->language('extension/paymos/payment/paymos');
         $this->document->setTitle($this->language->get('heading_title'));
 
@@ -31,6 +39,8 @@ class Paymos extends \Opencart\System\Engine\Controller
 
         $data['save'] = $this->url->link('extension/paymos/payment/paymos.save', 'user_token=' . $this->session->data['user_token']);
         $data['reconcile'] = $this->url->link('extension/paymos/payment/paymos.reconcile', 'user_token=' . $this->session->data['user_token']);
+        $data['refund_panel'] = $this->url->link('extension/paymos/payment/paymos.refundPanel', 'user_token=' . $this->session->data['user_token']);
+        $data['refund_submit'] = $this->url->link('extension/paymos/payment/paymos.refund', 'user_token=' . $this->session->data['user_token']);
         $data['connect_start'] = $this->url->link('extension/paymos/payment/paymos.connectStart', 'user_token=' . $this->session->data['user_token']);
         $data['connect_poll'] = $this->url->link('extension/paymos/payment/paymos.connectPoll', 'user_token=' . $this->session->data['user_token']);
         $data['back'] = $this->url->link('marketplace/extension', 'user_token=' . $this->session->data['user_token'] . '&type=payment');
@@ -165,7 +175,9 @@ class Paymos extends \Opencart\System\Engine\Controller
             \PaymosOpenCart\Migrations::ensure($this->db);
             $count = (new \PaymosOpenCart\Reconciler(
                 new \PaymosOpenCart\InvoiceStore($this->db),
-                new \PaymosOpenCart\OpenCartAdapter($this->registry)
+                new \PaymosOpenCart\OpenCartAdapter($this->registry),
+                null,
+                \PaymosOpenCart\RefundAdapter::fromRegistry($this->registry, $this->settings())
             ))->run($this->settings());
 
             $json['success'] = sprintf($this->language->get('text_reconcile_success'), $count);
@@ -180,17 +192,86 @@ class Paymos extends \Opencart\System\Engine\Controller
         // OpenCart 4.0.2.0 or later only (BUG-161): refuses older stores and
         // removes the extension row core has just added.
         $this->load->model('setting/extension');
-        \PaymosOpenCart\Installer::install(
+        $installed = \PaymosOpenCart\Installer::install(
             $this->db,
             $this->model_setting_extension,
             $this->log,
             defined('VERSION') ? (string) VERSION : ''
         );
+        if ($installed) {
+            $this->registerRefundGuards();
+            try {
+                $this->registerRefundCron();
+            } catch (\Throwable $error) {
+                $this->log->write('[Paymos] Refund cron registration failed: ' . $error->getMessage());
+            }
+        }
     }
 
     public function uninstall(): void
     {
-        \PaymosOpenCart\Migrations::uninstall($this->db);
+        $this->load->model('setting/cron');
+        $cron = $this->model_setting_cron->getCronByCode(\PaymosOpenCart\Installer::REFUND_CRON_CODE);
+        if ($cron && $cron['action'] === \PaymosOpenCart\Installer::REFUND_CRON_ACTION) {
+            $this->model_setting_cron->deleteCronByCode(\PaymosOpenCart\Installer::REFUND_CRON_CODE);
+        }
+        \PaymosOpenCart\Installer::uninstall($this->db);
+        $this->load->model('setting/event');
+        \PaymosOpenCart\Installer::unregisterRefundGuards($this->model_setting_event);
+    }
+
+    public function refundPanel(): void
+    {
+        $this->refundResponse(false);
+    }
+
+    public function nativeReturnBefore(string &$route, array &$args): void
+    {
+        (new \PaymosOpenCart\NativeRefundGuard($this->db))->beforeReturn($route, $args);
+    }
+
+    public function refund(): void
+    {
+        $this->refundResponse(true);
+    }
+
+    private function refundResponse(bool $write): void
+    {
+        $json = array();
+        try {
+            \PaymosOpenCart\RefundAdapter::assertProtectedRequest($this->request->server, $this->request->get,
+                $this->session->data, $this->user->hasPermission('modify', 'extension/paymos/payment/paymos'), $write);
+            $orderId = isset($this->request->get['order_id']) ? $this->request->get['order_id'] : '';
+            if (!is_scalar($orderId) || !preg_match('/^[1-9][0-9]*$/D', (string) $orderId)) {
+                throw new \RuntimeException('refund_order_required');
+            }
+            \PaymosOpenCart\Migrations::ensure($this->db);
+            if ($write) {
+                $this->registerRefundCron();
+            }
+            $adapter = \PaymosOpenCart\RefundAdapter::fromRegistry($this->registry, $this->settings());
+            $storeId = (int) $this->config->get('config_store_id');
+            $json['success'] = $write ? $adapter->publicState($adapter->submit((int) $orderId, $storeId, $this->request->post))
+                : $adapter->panel((int) $orderId, $storeId);
+        } catch (\Throwable $error) {
+            $this->log->write('[Paymos] Refund action failed: ' . $error->getMessage());
+            $json = array('error' => \PaymosOpenCart\NativeRefundGuard::ERROR_MESSAGE, 'reason' => 'refund_action_unavailable');
+        }
+        http_response_code(200);
+        $this->response->addHeader('Content-Type: application/json');
+        $this->response->setOutput(json_encode($json));
+    }
+
+    private function registerRefundCron(): void
+    {
+        $this->load->model('setting/cron');
+        \PaymosOpenCart\Installer::registerRefundCron($this->model_setting_cron, $this->db);
+    }
+
+    private function registerRefundGuards(): void
+    {
+        $this->load->model('setting/event');
+        \PaymosOpenCart\Installer::registerRefundGuards($this->model_setting_event);
     }
 
     /**

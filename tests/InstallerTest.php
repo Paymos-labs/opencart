@@ -43,7 +43,18 @@ function test_opencart_installer_installs_on_4_0_2_0_and_later()
 
         assertSameValue(true, $installed, 'OpenCart ' . $version . ' must be installed.');
         assertSameValue(array(), $extensions->uninstalled, 'a supported store keeps the extension on ' . $version . '.');
-        assertSameValue(2, count($db->queries), 'both Paymos tables are created on ' . $version . '.');
+        $tables = array();
+        foreach ($db->queries as $query) {
+            assertSameValue(1, preg_match('/^CREATE TABLE IF NOT EXISTS `([^`]+)`/', $query, $match), 'Install executes only additive table creation.');
+            $tables[] = $match[1];
+        }
+        sort($tables);
+        $expected = array_map(static function ($name) { return \PaymosOpenCart\Migrations::table($name); }, array(
+            'paymos_event', 'paymos_invoice', 'paymos_refund_discovery', 'paymos_refund_external',
+            'paymos_refund_installation', 'paymos_refund_intent', 'paymos_refund_projection',
+        ));
+        sort($expected);
+        assertSameValue($expected, $tables, 'Exactly the two payment and five refund tables are created on ' . $version . '.');
         assertSameValue(array(), $log->lines, 'nothing is logged on ' . $version . '.');
     }
 }

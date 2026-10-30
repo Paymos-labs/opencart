@@ -16,6 +16,23 @@
     </div>
   </div>
   <div class="container-fluid">
+    <div class="card mb-3" id="paymos-refunds">
+      <div class="card-header">Paymos refunds</div>
+      <div class="card-body">
+        <form id="form-paymos-refund-order" class="d-flex gap-2 mb-3">
+          <label for="paymos-refund-order">Order ID</label>
+          <input id="paymos-refund-order" type="number" min="1" step="1" required class="form-control"/>
+          <button type="submit" class="btn btn-info">Show</button>
+        </form>
+        <div id="paymos-refund-state" aria-live="polite"></div>
+        <div id="paymos-refund-error" class="alert alert-danger" role="alert" hidden></div>
+        <div id="paymos-refund-unavailable" class="alert alert-warning" role="status" hidden></div>
+        <div id="paymos-refund-summary" class="mb-3"></div>
+        <button type="button" data-refund-mode="full" class="btn btn-warning" disabled>Refund in full</button>
+        <button type="button" data-refund-mode="overpayment" class="btn btn-warning" disabled>Refund overpayment</button>
+        <table class="table mt-3"><thead><tr><th>Operation ID</th><th>Type</th><th>Status</th><th>Amount</th></tr></thead><tbody id="paymos-refund-history"></tbody></table>
+      </div>
+    </div>
     <div class="card">
       <div class="card-header"><i class="fa-solid fa-pencil"></i> {{ text_edit }}</div>
       <div class="card-body">
@@ -109,6 +126,100 @@
   </div>
 </div>
 <script>
+(function () {
+  var form = document.getElementById('form-paymos-refund-order');
+  var order = document.getElementById('paymos-refund-order');
+  var status = document.getElementById('paymos-refund-state');
+  var errorBox = document.getElementById('paymos-refund-error');
+  var unavailable = document.getElementById('paymos-refund-unavailable');
+  var buttons = document.querySelectorAll('[data-refund-mode]');
+  var currentOrder = '';
+  var pending = {};
+  var busy = false;
+  function setBusy(value) {
+    busy = value; order.disabled = value; form.querySelector('button').disabled = value;
+  }
+  function disable() { buttons.forEach(function (button) { button.disabled = true; }); }
+  function clearError() { errorBox.textContent = ''; errorBox.hidden = true; status.textContent = ''; }
+  function showError(message) {
+    if (!errorBox.hidden) return;
+    errorBox.textContent = message; errorBox.hidden = false; status.textContent = '';
+  }
+  function token(mode) {
+    var key = 'paymos-refund:' + currentOrder + ':' + mode;
+    var saved = window.localStorage.getItem(key);
+    if (!saved) {
+      var bytes = new Uint8Array(16);
+      window.crypto.getRandomValues(bytes);
+      saved = Array.from(bytes).map(function (value) { return value.toString(16).padStart(2, '0'); }).join('');
+      window.localStorage.setItem(key, saved);
+    }
+    return saved;
+  }
+  function load() {
+    disable();
+    var requestedOrder = currentOrder;
+    return fetch('{{ refund_panel|escape('js') }}&order_id=' + encodeURIComponent(requestedOrder))
+      .then(function (response) { return response.json(); })
+      .then(function (json) {
+        if (requestedOrder !== currentOrder) return;
+        if (json.error) { showError(json.error); return; }
+        var data = json.success;
+        var summary = data.summary;
+        unavailable.textContent = data.unavailable_reason || '';
+        unavailable.hidden = !data.unavailable_reason;
+        pending = {};
+        var history = document.getElementById('paymos-refund-history');
+        history.textContent = '';
+        data.operations.forEach(function (operation) {
+          var row = document.createElement('tr');
+          var observation = operation.observation || {};
+          [operation.operation_id, operation.mode, operation.cash_state, (observation.amount || '') + ' ' + (observation.currency || '')].forEach(function (value) {
+            var cell = document.createElement('td'); cell.textContent = value; row.appendChild(cell);
+          });
+          history.appendChild(row);
+          var key = 'paymos-refund:' + currentOrder + ':' + operation.mode;
+          if (operation.cash_state === 'unknown' || operation.cash_state === 'not_submitted') {
+            pending[operation.mode] = operation.request_token;
+          } else if (['failed', 'cancelled', 'completed'].indexOf(operation.cash_state) !== -1
+            && window.localStorage.getItem(key) === operation.request_token) {
+            window.localStorage.removeItem(key);
+          }
+        });
+        document.getElementById('paymos-refund-summary').textContent =
+          (summary.full_refund_amount || '0') + ' / ' + (summary.overpayment_refund_amount || '0')
+          + ' ' + ((summary.refund_asset || {}).currency || '') + ' ' + (summary.sender_address || '');
+        buttons.forEach(function (button) {
+          var mode = button.dataset.refundMode;
+          button.disabled = busy || data.unavailable_reason === 'refund_reconnect_required'
+            || !(pending[mode] || (mode === 'full' ? data.can_full : data.can_overpayment));
+        });
+        status.textContent = errorBox.hidden ? 'Refund details loaded.' : '';
+      }).catch(function () { if (requestedOrder !== currentOrder) return; disable(); showError('Refund details could not be loaded. Check the order ID and try again.'); });
+  }
+  form.addEventListener('submit', function (event) {
+    event.preventDefault(); if (busy) return; clearError(); currentOrder = order.value; load();
+  });
+  buttons.forEach(function (button) {
+    button.addEventListener('click', function () {
+      if (busy) return;
+      clearError();
+      setBusy(true);
+      disable();
+      var mode = button.dataset.refundMode;
+      try {
+        var body = new URLSearchParams({mode: mode, request_token: pending[mode] || token(mode)});
+        fetch('{{ refund_submit|escape('js') }}&order_id=' + encodeURIComponent(currentOrder), {
+          method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded'}, body: body.toString()
+        }).then(function (response) { return response.json(); }).then(function (json) {
+          setBusy(false);
+          if (json.error) showError(json.error);
+          return load();
+        }).catch(function () { setBusy(false); showError('The refund request failed. Check the refunds below before trying again.'); load(); });
+      } catch (error) { setBusy(false); showError('The refund request was not sent. Reload the page and try again.'); load(); }
+    });
+  });
+}());
 document.getElementById('button-paymos-reconcile').addEventListener('click', function () {
   fetch('{{ reconcile }}', {method: 'POST', headers: {'X-Requested-With': 'XMLHttpRequest'}})
     .then(function (response) { return response.json(); })

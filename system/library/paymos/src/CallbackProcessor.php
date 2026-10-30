@@ -30,16 +30,20 @@ final class CallbackProcessor
     /** @var callable|null */
     private $clientFactory;
 
+    private $refundAdapter;
+
     public function __construct(
         OpenCartAdapterInterface $opencart,
         InvoiceStoreInterface $invoiceStore,
         EventStoreInterface $eventStore,
-        ?callable $clientFactory = null
+        ?callable $clientFactory = null,
+        ?RefundAdapter $refundAdapter = null
     ) {
         $this->opencart = $opencart;
         $this->invoiceStore = $invoiceStore;
         $this->eventStore = $eventStore;
         $this->clientFactory = $clientFactory;
+        $this->refundAdapter = $refundAdapter;
     }
 
     /**
@@ -55,6 +59,12 @@ final class CallbackProcessor
             $event = $verified->event();
 
             if (!$event->isInvoiceEvent()) {
+                if (strpos($event->type(), 'withdrawal.') === 0 && $event->invoiceId() !== '') {
+                    if ($this->refundAdapter === null) {
+                        throw new \RuntimeException('refund_adapter_unavailable');
+                    }
+                    $this->refundAdapter->callback($event, $environment);
+                }
                 $this->commitEvent();
                 return new CallbackResult(200, 'OK');
             }
