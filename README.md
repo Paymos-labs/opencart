@@ -122,11 +122,33 @@ A terminal callback is never trusted on its signature alone: the invoice is fetc
 back from the Merchant API and compared with the stored snapshot before the order
 moves.
 
-Reconciliation here is a button, not a cron job. **Reconcile Paymos orders** at the
-top of the settings page takes up to 50 unresolved invoices from the last 24 hours,
-pulls each one from the API, and runs it through the same mapping and the same
-guards, then tells you how many orders it moved. Use it after an outage, or whenever
-an order looks stuck.
+Invoice reconciliation here is a button, not a cron job. **Reconcile Paymos orders**
+at the top of the settings page takes up to 50 unresolved invoices from the last 24
+hours, pulls each one from the API, runs it through the same mapping and guards,
+reconciles pending refunds, and tells you how many records it updated. Use it after
+an outage, or whenever an order looks stuck.
+
+## Refunds
+
+The extension supports native refunds through the Paymos Merchant API (`/v1/refunds`)
+in two server-calculated modes: `full` (full invoice refund) and `overpayment`
+(refund of the excess on a `paid_over` invoice). Funds are returned as a new
+outbound blockchain transaction strictly to the verified `first_sender` address
+recorded by Paymos on the paid invoice — no recipient wallet address is entered
+manually, and arbitrary partial refund amounts are not supported.
+
+To submit or inspect a refund in OpenCart:
+
+1. Open **Extensions → Extensions → Payments → Paymos** in the OpenCart admin.
+2. Enter the OpenCart order ID in the **Paymos refunds** panel (`refundPanel`) to load the refundable amounts, the verified `first_sender` address, and existing operations.
+3. Choose either the `full` refund action or the `overpayment` refund action (`extension/paymos/payment/paymos.refund`).
+
+Installing or opening the extension registers a 1-minute OpenCart cron task
+(`paymos_refunds` → `extension/paymos/payment/paymos.refundCron`), and both signed
+callbacks and the **Reconcile Paymos orders** button also advance pending refund
+operations. Completed refunds are recorded in the OpenCart order history once
+verified against the Merchant API, and Sandbox mode supports simulating terminal
+outcomes (`completed`, `failed`, `cancelled`).
 
 ## Troubleshooting
 
@@ -151,10 +173,6 @@ never finished connecting, and an order currency the project does not invoice in
 
 **An order needs manual review.** Its total changed between the invoice being created
 and the payment landing. The history note carries both figures — settle it by hand.
-
-**Sending money back.** An on-chain payment that has reached finality cannot be
-reversed, so a refund is a new outbound transaction: withdraw from your Paymos
-balance to the address you agreed with the customer, then record it in OpenCart.
 
 - [Documentation](https://paymos.io/docs/cms-opencart)
 - [Source](https://github.com/paymos-labs/opencart)
