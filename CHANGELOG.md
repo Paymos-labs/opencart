@@ -8,6 +8,13 @@ The public release history also lives at [paymos.io/changelog](https://paymos.io
 
 ## [Unreleased]
 
+## [1.4.5] - 2026-11-08
+
+- test(opencart): separate PHP and JavaScript harnesses
+- fix(release): run OpenCart panel check outside PHP
+- test(opencart): find Node for the release panel check
+- chore: rebuild canonical CMS package
+
 ## [1.4.4] - 2026-11-06
 
 - fix(cms): align marketplace manifests, refund copy, store links, and release guards
