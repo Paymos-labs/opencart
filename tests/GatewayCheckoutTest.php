@@ -9,6 +9,27 @@ use Paymos\Http\MockTransport;
 use PaymosOpenCart\GatewayCheckout;
 use PaymosOpenCart\InMemoryInvoiceStore;
 
+function test_opencart_checkout_terminal_create_recovery_remains_unapplied_until_reconciliation()
+{
+    foreach (array('paid' => 5, 'paid_over' => 5, 'expired' => 7, 'cancelled' => 7, 'underpaid' => 10) as $status => $nativeStatus) {
+        $store = new InMemoryInvoiceStore();
+        $adapter = new FakeOpenCartAdapter();
+        $invoice = opencart_invoice_event('unused', 'invoice.' . $status, $status)['data'];
+        $invoice['payment_url'] = 'https://checkout.paymos.test/inv_123';
+        $response = new HttpResponse(200, json_encode($invoice), array());
+        $client = new Client(new ClientConfig('pk_test_123', 'sk_test_123', 'https://api.paymos.test'), new MockTransport(array($response, $response)));
+        $factory = static function () use ($client) { return $client; };
+        (new GatewayCheckout($store, $adapter, $factory))->start(42, opencart_settings());
+        assertSameValue('created', $store->findByOpenCartOrderId(42)['status'], 'A recovered terminal create response is not already-applied native state.');
+        $reconciler = new \PaymosOpenCart\Reconciler($store, $adapter, $factory);
+        assertSameValue($nativeStatus === 5 ? 1 : 0, $reconciler->run(opencart_settings()), 'The terminal invoice remains reachable for native application.');
+        assertSameValue($status, $store->findByOpenCartOrderId(42)['status'], 'Native application makes the snapshot final.');
+        assertSameValue(1, count(array_filter($adapter->histories, static function ($row) use ($nativeStatus) { return $row['order_status_id'] === $nativeStatus; })), 'Lost create response recovery must apply native state once.');
+        assertSameValue(0, $reconciler->run(opencart_settings()), 'Final state is not applied twice.');
+        assertSameValue(2, count($adapter->histories), 'Only awaiting and one terminal native history entry are written.');
+    }
+}
+
 function test_opencart_gateway_checkout_creates_invoice_and_stores_snapshot()
 {
     $store = new InMemoryInvoiceStore();

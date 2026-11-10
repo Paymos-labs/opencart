@@ -48,6 +48,13 @@ final class GatewayCheckout
      */
     public function start($orderId, array $settings)
     {
+        return $this->store->synchronized($orderId, function () use ($orderId, $settings) {
+            return $this->startLocked($orderId, $settings);
+        });
+    }
+
+    private function startLocked($orderId, array $settings)
+    {
         $config = Config::fromSettings($settings);
         $order = $this->opencart->getOrder($orderId);
         if (count($order) === 0) {
@@ -93,6 +100,12 @@ final class GatewayCheckout
             throw new \RuntimeException('Paymos invoice create response is missing invoice id or payment URL.');
         }
 
+        // An idempotent retry can return a terminal invoice after a lost first
+        // response. Observation is not native application: leave it available
+        // to the verified callback/reconciler instead of fencing both out.
+        $observedStatus = $this->responseField($response, array('status')) ?: 'created';
+        $snapshotStatus = StatusMapper::isFinalStatus($observedStatus) ? 'created' : $observedStatus;
+        $this->store->assertLocked($orderId);
         $this->store->save(array(
             'opencart_order_id' => (int) $orderId,
             'paymos_invoice_id' => $paymosInvoiceId,
@@ -102,7 +115,7 @@ final class GatewayCheckout
             'amount' => $amount,
             'currency' => $currency,
             'payment_url' => $paymentUrl,
-            'status' => $this->responseField($response, array('status')) ?: 'created',
+            'status' => $snapshotStatus,
             'renew_count' => $renewCount,
         ));
 
@@ -191,6 +204,8 @@ final class GatewayCheckout
             return true;
         }
 
+        $this->store->assertLocked($row['opencart_order_id']);
+
         if (!InvoiceRenewal::isRequired($invoice)) {
             return true;
         }
@@ -220,6 +235,7 @@ final class GatewayCheckout
         $result = (new InvoiceReplacement(function () use ($config, $environment) {
             return $this->client($config, $environment);
         }))->close((string) $row['paymos_invoice_id'], $recorded);
+        $this->store->assertLocked($orderId);
 
         if ($result->isClosed()) {
             // Record the final status before the new row exists: the old
@@ -227,12 +243,14 @@ final class GatewayCheckout
             // arrives for a row that is already final and is ignored as stale,
             // instead of cancelling the order that now has a new invoice.
             if ($result->status() !== '' && $result->status() !== $recorded) {
+                $this->store->assertLocked($orderId);
                 $this->store->updateStatus((string) $row['paymos_invoice_id'], $result->status());
             }
 
             return;
         }
 
+        $this->store->assertLocked($orderId);
         $this->opencart->addOrderHistory(
             $orderId,
             $config->statusId('confirming'),

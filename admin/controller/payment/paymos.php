@@ -23,6 +23,10 @@ class Paymos extends \Opencart\System\Engine\Controller
         $this->load->language('extension/paymos/payment/paymos');
         $this->document->setTitle($this->language->get('heading_title'));
 
+        foreach (['text_paymos_connect', 'text_paymos_connect_intro', 'text_paymos_connected', 'text_paymos_connect_store', 'text_paymos_connect_starting', 'text_paymos_connect_waiting', 'text_paymos_connect_open', 'text_paymos_connect_blocked', 'text_paymos_connect_code', 'text_paymos_refunds', 'text_paymos_refund_order_id', 'text_paymos_refund_show', 'text_paymos_refund_full', 'text_paymos_refund_overpayment', 'text_paymos_refund_operation', 'text_paymos_refund_type', 'text_paymos_refund_status', 'text_paymos_refund_amount', 'text_paymos_refund_loaded', 'text_paymos_refund_load_failed', 'text_paymos_refund_request_failed', 'text_paymos_refund_not_sent', 'text_paymos_calculated'] as $label) {
+            $data[$label] = $this->language->get($label);
+        }
+
         $data['breadcrumbs'] = [];
         $data['breadcrumbs'][] = [
             'text' => $this->language->get('text_home'),

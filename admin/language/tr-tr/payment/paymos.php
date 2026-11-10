@@ -36,3 +36,28 @@ $_['button_reconcile'] = 'Paymos siparişlerini mutabakata sok';
 $_['button_confirm'] = 'Paymos ile öde';
 
 $_['error_permission'] = 'Uyarı: Paymos ayarlarını değiştirme izniniz yok.';
+
+// Connect and refund interface
+$_['text_paymos_connect'] = 'Paymos’a bağlan';
+$_['text_paymos_connect_intro'] = 'Bu mağaza adresini Paymos’ta seçili projeye bağlar.';
+$_['text_paymos_connected'] = 'Güvenli bağlantı kuruldu';
+$_['text_paymos_connect_store'] = 'Bu mağazayı Paymos’a bağlayın.';
+$_['text_paymos_connect_starting'] = 'Güvenli bağlantı başlatılıyor…';
+$_['text_paymos_connect_waiting'] = 'Onay bekleniyor. Kod: ';
+$_['text_paymos_connect_open'] = 'Onay sayfasını aç';
+$_['text_paymos_connect_blocked'] = 'Tarayıcınız onay sekmesini engelledi. ';
+$_['text_paymos_connect_code'] = ' Kod: ';
+$_['text_paymos_refunds'] = 'Paymos iadeleri';
+$_['text_paymos_refund_order_id'] = 'Sipariş numarası';
+$_['text_paymos_refund_show'] = 'Göster';
+$_['text_paymos_refund_full'] = 'Tamamını iade et';
+$_['text_paymos_refund_overpayment'] = 'Fazla ödemeyi iade et';
+$_['text_paymos_refund_operation'] = 'İşlem numarası';
+$_['text_paymos_refund_type'] = 'Tür';
+$_['text_paymos_refund_status'] = 'Durum';
+$_['text_paymos_refund_amount'] = 'Tutar';
+$_['text_paymos_refund_loaded'] = 'İade bilgileri yüklendi.';
+$_['text_paymos_refund_load_failed'] = 'İade bilgileri yüklenemedi. Sipariş numarasını kontrol edip tekrar deneyin.';
+$_['text_paymos_refund_request_failed'] = 'İade talebi başarısız oldu. Tekrar denemeden önce aşağıdaki iadeleri kontrol edin.';
+$_['text_paymos_refund_not_sent'] = 'İade talebi gönderilmedi. Sayfayı yenileyip tekrar deneyin.';
+$_['text_paymos_calculated'] = 'Tutar, iade gönderilmeden önce Paymos tarafından hesaplanır.';

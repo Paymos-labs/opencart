@@ -36,3 +36,28 @@ $_['button_reconcile'] = '对账 Paymos 订单';
 $_['button_confirm'] = '通过 Paymos 付款';
 
 $_['error_permission'] = '警告：你没有修改 Paymos 设置的权限。';
+
+// Connect and refund interface
+$_['text_paymos_connect'] = '连接 Paymos';
+$_['text_paymos_connect_intro'] = '将此商店网址连接到 Paymos 中当前选定的项目。';
+$_['text_paymos_connected'] = '已安全连接';
+$_['text_paymos_connect_store'] = '请将此商店连接到 Paymos。';
+$_['text_paymos_connect_starting'] = '正在发起安全连接…';
+$_['text_paymos_connect_waiting'] = '正在等待授权。验证码：';
+$_['text_paymos_connect_open'] = '打开授权页面';
+$_['text_paymos_connect_blocked'] = '浏览器拦截了授权标签页。';
+$_['text_paymos_connect_code'] = ' 验证码：';
+$_['text_paymos_refunds'] = 'Paymos 退款';
+$_['text_paymos_refund_order_id'] = '订单编号';
+$_['text_paymos_refund_show'] = '显示';
+$_['text_paymos_refund_full'] = '全额退款';
+$_['text_paymos_refund_overpayment'] = '退还多付金额';
+$_['text_paymos_refund_operation'] = '操作编号';
+$_['text_paymos_refund_type'] = '类型';
+$_['text_paymos_refund_status'] = '状态';
+$_['text_paymos_refund_amount'] = '金额';
+$_['text_paymos_refund_loaded'] = '退款详情已加载。';
+$_['text_paymos_refund_load_failed'] = '无法加载退款详情。请检查订单编号后重试。';
+$_['text_paymos_refund_request_failed'] = '退款请求失败。请先查看下方退款记录，再重试。';
+$_['text_paymos_refund_not_sent'] = '退款请求未发送。请刷新页面后重试。';
+$_['text_paymos_calculated'] = 'Paymos 将在发送退款前计算金额。';

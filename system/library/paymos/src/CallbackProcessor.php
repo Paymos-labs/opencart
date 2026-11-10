@@ -51,10 +51,12 @@ final class CallbackProcessor
      */
     public function handle($rawBody, $signatureHeader, array $settings, $now = null)
     {
+        $reserved = false;
         try {
             $config = Config::fromSettings($settings);
             $verified = (new MultiEnvironmentWebhookVerifier($config->webhookSecrets(), $this->eventStore))
                 ->process($signatureHeader, $rawBody, $now);
+            $reserved = true;
             $environment = $verified->environment();
             $event = $verified->event();
 
@@ -78,6 +80,7 @@ final class CallbackProcessor
             $this->opencart->log('Paymos duplicate webhook ignored.', array('duplicate' => true));
             return new CallbackResult(200, 'OK', true);
         } catch (EventInProgressException $e) {
+            if ($reserved) { $this->releaseEvent(); }
             // Another delivery of this event holds the lock and has not finished.
             // Not a duplicate: a 2xx would mark it delivered even if that delivery
             // then fails. 409 makes the server retry; the lock is not ours to drop.
@@ -95,6 +98,10 @@ final class CallbackProcessor
             $this->releaseEvent();
             $this->opencart->log('Paymos webhook processing failed.', array('error' => $e->getMessage()));
             return new CallbackResult(400, 'Processing failed');
+        } catch (\Throwable $e) {
+            $this->releaseEvent();
+            $this->opencart->log('Paymos webhook processing failed.', array('error' => $e->getMessage()));
+            return new CallbackResult(500, 'Processing failed');
         }
     }
 
@@ -105,6 +112,8 @@ final class CallbackProcessor
      */
     public function applyTrustedInvoice(array $invoice, array $row, array $settings, $now)
     {
+        // Reconciler holds the shared order lock across GET and this native apply.
+        $this->invoiceStore->assertLocked($row['opencart_order_id']);
         $invoiceId = $this->field($invoice, array('invoice_id'));
         $status = $this->field($invoice, array('status'));
         $event = new WebhookEvent(array(
@@ -114,7 +123,7 @@ final class CallbackProcessor
             'data' => $invoice,
         ));
 
-        return $this->applyEventToOpenCart($event, (string) $row['environment'], $row, $settings, false);
+        return $this->applyLockedEventToOpenCart($event, (string) $row['environment'], $row, $settings, false);
     }
 
     /**
@@ -141,8 +150,25 @@ final class CallbackProcessor
      */
     private function applyEventToOpenCart(WebhookEvent $event, $environment, array $row, array $settings, $reverseVerify)
     {
+        return $this->invoiceStore->synchronized($row['opencart_order_id'], function () use ($event, $environment, $row, $settings, $reverseVerify) {
+            $fresh = $this->invoiceStore->findByExternalOrderId($event->externalOrderId());
+            if (!is_array($fresh) || (int) $fresh['opencart_order_id'] !== (int) $row['opencart_order_id']) {
+                throw new \RuntimeException('Paymos invoice snapshot changed while acquiring its lock.');
+            }
+            return $this->applyLockedEventToOpenCart($event, $environment, $fresh, $settings, $reverseVerify);
+        });
+    }
+
+    private function applyLockedEventToOpenCart(WebhookEvent $event, $environment, array $row, array $settings, $reverseVerify)
+    {
         $config = Config::fromSettings($settings);
         $this->assertRowMatchesEvent($row, $event, $environment);
+
+        $action = StatusMapper::invoiceAction($event->type(), $event->status());
+        if ($action !== StatusMapper::ACTION_NOTE_PAID_LATE
+            && StatusMapper::isFinalStatus(isset($row['status']) ? (string) $row['status'] : '')) {
+            return false;
+        }
 
         if ($reverseVerify && $this->requiresReverseVerify($event)) {
             $result = (new InvoiceReverseVerifier($this->client($environment, $settings)))->verify($event, array(
@@ -157,7 +183,7 @@ final class CallbackProcessor
             }
         }
 
-        $action = StatusMapper::invoiceAction($event->type(), $event->status());
+        $this->invoiceStore->assertLocked($row['opencart_order_id']);
 
         if ($action === StatusMapper::ACTION_IGNORE) {
             return false;
@@ -241,10 +267,8 @@ final class CallbackProcessor
                 $event->orderAmount(),
                 $event->orderCurrency()
             )) {
-                // Amount mismatch is NOT a transient failure — do not throw into the
-                // retry path (the server would redeliver forever). Hold the order for
-                // manual review and acknowledge the webhook.
-                $this->invoiceStore->updateStatus($event->invoiceId(), $event->status());
+                // Observation is not application. Keep the nonfinal snapshot and
+                // event retryable so correcting the native total can recover payment.
                 $this->opencart->addOrderHistory(
                     (int) $row['opencart_order_id'],
                     $config->statusId('confirming'),
@@ -258,6 +282,13 @@ final class CallbackProcessor
                     ),
                     false
                 );
+                throw new \RuntimeException('Paymos payment needs manual review before it can be applied.');
+            }
+
+            // A previous native write may have succeeded before the snapshot write
+            // failed. Do not repeat stock/email/history effects on recovery.
+            if ((int) $this->scalar($order, 'order_status_id', '0') === (int) $config->statusId('paid')) {
+                $this->invoiceStore->updateStatus($event->invoiceId(), $event->status());
                 return false;
             }
         }

@@ -36,3 +36,28 @@ $_['button_reconcile'] = 'Reconcile Paymos orders';
 $_['button_confirm'] = 'Pay with Paymos';
 
 $_['error_permission'] = 'Warning: You do not have permission to modify Paymos.';
+
+// Connect and refund interface
+$_['text_paymos_connect'] = 'Connect Paymos';
+$_['text_paymos_connect_intro'] = 'Connects this exact shop URL to the project currently selected in Paymos.';
+$_['text_paymos_connected'] = 'Connected securely';
+$_['text_paymos_connect_store'] = 'Connect this store to Paymos.';
+$_['text_paymos_connect_starting'] = 'Starting secure connection…';
+$_['text_paymos_connect_waiting'] = 'Waiting for approval. Code: ';
+$_['text_paymos_connect_open'] = 'Open the approval page';
+$_['text_paymos_connect_blocked'] = 'Your browser blocked the approval tab. ';
+$_['text_paymos_connect_code'] = ' Code: ';
+$_['text_paymos_refunds'] = 'Paymos refunds';
+$_['text_paymos_refund_order_id'] = 'Order ID';
+$_['text_paymos_refund_show'] = 'Show';
+$_['text_paymos_refund_full'] = 'Refund in full';
+$_['text_paymos_refund_overpayment'] = 'Refund overpayment';
+$_['text_paymos_refund_operation'] = 'Operation ID';
+$_['text_paymos_refund_type'] = 'Type';
+$_['text_paymos_refund_status'] = 'Status';
+$_['text_paymos_refund_amount'] = 'Amount';
+$_['text_paymos_refund_loaded'] = 'Refund details loaded.';
+$_['text_paymos_refund_load_failed'] = 'Refund details could not be loaded. Check the order ID and try again.';
+$_['text_paymos_refund_request_failed'] = 'The refund request failed. Check the refunds below before trying again.';
+$_['text_paymos_refund_not_sent'] = 'The refund request was not sent. Reload the page and try again.';
+$_['text_paymos_calculated'] = 'Calculated by Paymos before the refund is sent.';

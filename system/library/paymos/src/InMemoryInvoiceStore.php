@@ -8,6 +8,24 @@ final class InMemoryInvoiceStore implements InvoiceStoreInterface
 {
     /** @var array<int, array<string, mixed>> */
     private $rows = array();
+    private $orderLocks = array();
+
+    public function synchronized($orderId, callable $action)
+    {
+        $key = (string) (int) $orderId;
+        if (isset($this->orderLocks[$key])) {
+            throw new \Paymos\Exception\EventInProgressException('Paymos order is busy.');
+        }
+        $this->orderLocks[$key] = true;
+        try { return $action(); } finally { unset($this->orderLocks[$key]); }
+    }
+
+    public function assertLocked($orderId)
+    {
+        if (empty($this->orderLocks[(string) (int) $orderId])) {
+            throw new \RuntimeException('Paymos order lock is not held.');
+        }
+    }
 
     public function findByOpenCartOrderId($orderId)
     {

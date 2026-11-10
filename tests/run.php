@@ -76,9 +76,24 @@ foreach (get_defined_functions()['user'] as $function) {
 
 paymos_opencart_reset_test_state();
 
-// The release publisher and test-plugin-opencart.ps1 run the JS fixture in Node.
 if (!is_file(__DIR__ . '/refund-panel.cjs')) {
-    throw new RuntimeException('The OpenCart refund panel JavaScript fixture is missing.');
+    throw new RuntimeException('Missing the refund panel JavaScript check script.');
+}
+
+$template = file_get_contents(PAYMOS_OPENCART_PLUGIN_DIR . 'admin/view/template/payment/paymos.twig');
+preg_match_all('~<script\b[^>]*>(.*?)</script>~s', $template, $scripts);
+$urls = array('refund_panel', 'refund_submit', 'reconcile', 'connect_start', 'connect_poll');
+foreach (array('en-gb', 'ru-ru', 'de-de', 'es-es', 'tr-tr', 'zh-cn') as $locale) {
+    $_ = array();
+    require PAYMOS_OPENCART_PLUGIN_DIR . 'admin/language/' . $locale . '/payment/paymos.php';
+    $labels = $_;
+    preg_replace_callback('~{{\s*(\w+)(?:\|escape\(\'js\'\))?\s*}}~', static function ($match) use ($labels, $urls) {
+        $key = $match[1];
+        if (!in_array($key, $urls, true) && (!isset($labels[$key]) || $labels[$key] === '')) {
+            throw new RuntimeException('Missing template translation: ' . $key);
+        }
+        return '';
+    }, implode("\n", $scripts[1]));
 }
 
 echo "OK {$count} tests\n";

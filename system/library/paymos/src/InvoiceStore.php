@@ -8,10 +8,50 @@ final class InvoiceStore implements InvoiceStoreInterface
 {
     /** @var object */
     private $db;
+    private $orderLocks = array();
 
     public function __construct($db)
     {
         $this->db = $db;
+    }
+
+    public function synchronized($orderId, callable $action)
+    {
+        $key = (string) (int) $orderId;
+        if (isset($this->orderLocks[$key])) {
+            throw new \Paymos\Exception\EventInProgressException('Paymos order is busy.');
+        }
+        $database = $this->db->query('SELECT DATABASE() AS database_name');
+        $name = hash('sha256', ($database->row['database_name'] ?? '') . ':' . Migrations::table(Migrations::INVOICES_TABLE) . ':' . $key);
+        $query = $this->db->query("SELECT GET_LOCK('" . $this->db->escape($name) . "', 0) AS acquired, CONNECTION_ID() AS owner_id");
+        if ((string) ($query->row['acquired'] ?? '') === '0') {
+            throw new \Paymos\Exception\EventInProgressException('Paymos order is busy.');
+        }
+        if ((string) ($query->row['acquired'] ?? '') !== '1' || empty($query->row['owner_id'])) {
+            throw new \RuntimeException('Paymos order lock could not be acquired.');
+        }
+        $owner = (string) $query->row['owner_id'];
+        $this->orderLocks[$key] = array('name' => $name, 'owner' => $owner);
+        try {
+            $this->assertLocked($key);
+            return $action();
+        } finally {
+            unset($this->orderLocks[$key]);
+            $escapedName = $this->db->escape($name);
+            $escapedOwner = $this->db->escape($owner);
+            $this->db->query("SELECT IF(CONNECTION_ID() = '" . $escapedOwner . "' AND IS_USED_LOCK('" . $escapedName . "') = '" . $escapedOwner . "', RELEASE_LOCK('" . $escapedName . "'), NULL)");
+        }
+    }
+
+    public function assertLocked($orderId)
+    {
+        $lock = $this->orderLocks[(string) (int) $orderId] ?? null;
+        if ($lock === null) { throw new \RuntimeException('Paymos order lock is not held.'); }
+        $query = $this->db->query("SELECT IS_USED_LOCK('" . $this->db->escape($lock['name']) . "') AS owner_id, CONNECTION_ID() AS connection_id");
+        if ((string) ($query->row['owner_id'] ?? '') !== $lock['owner']
+            || (string) ($query->row['connection_id'] ?? '') !== $lock['owner']) {
+            throw new \RuntimeException('Paymos order lock ownership was lost.');
+        }
     }
 
     public function findByOpenCartOrderId($orderId)

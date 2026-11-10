@@ -17,20 +17,20 @@
   </div>
   <div class="container-fluid">
     <div class="card mb-3" id="paymos-refunds">
-      <div class="card-header">Paymos refunds</div>
+      <div class="card-header">{{ text_paymos_refunds|escape }}</div>
       <div class="card-body">
         <form id="form-paymos-refund-order" class="d-flex gap-2 mb-3">
-          <label for="paymos-refund-order">Order ID</label>
+          <label for="paymos-refund-order">{{ text_paymos_refund_order_id|escape }}</label>
           <input id="paymos-refund-order" type="number" min="1" step="1" required class="form-control"/>
-          <button type="submit" class="btn btn-info">Show</button>
+          <button type="submit" class="btn btn-info">{{ text_paymos_refund_show|escape }}</button>
         </form>
         <div id="paymos-refund-state" aria-live="polite"></div>
         <div id="paymos-refund-error" class="alert alert-danger" role="alert" hidden></div>
         <div id="paymos-refund-unavailable" class="alert alert-warning" role="status" hidden></div>
         <div id="paymos-refund-summary" class="mb-3"></div>
-        <button type="button" data-refund-mode="full" class="btn btn-warning" disabled>Refund in full</button>
-        <button type="button" data-refund-mode="overpayment" class="btn btn-warning" disabled>Refund overpayment</button>
-        <table class="table mt-3"><thead><tr><th>Operation ID</th><th>Type</th><th>Status</th><th>Amount</th></tr></thead><tbody id="paymos-refund-history"></tbody></table>
+        <button type="button" data-refund-mode="full" class="btn btn-warning" disabled>{{ text_paymos_refund_full|escape }}</button>
+        <button type="button" data-refund-mode="overpayment" class="btn btn-warning" disabled>{{ text_paymos_refund_overpayment|escape }}</button>
+        <table class="table mt-3"><thead><tr><th>{{ text_paymos_refund_operation|escape }}</th><th>{{ text_paymos_refund_type|escape }}</th><th>{{ text_paymos_refund_status|escape }}</th><th>{{ text_paymos_refund_amount|escape }}</th></tr></thead><tbody id="paymos-refund-history"></tbody></table>
       </div>
     </div>
     <div class="card">
@@ -61,12 +61,12 @@
           <div class="row mb-3">
             <label class="col-sm-2 col-form-label">{{ entry_credentials }}</label>
             <div class="col-sm-10">
-              <button type="button" id="button-paymos-connect" class="btn btn-primary mb-2">Connect Paymos</button>
+              <button type="button" id="button-paymos-connect" class="btn btn-primary mb-2">{{ text_paymos_connect|escape }}</button>
               <div id="paymos-connect-status" class="form-text" aria-live="polite"></div>
               {% if generated_config %}
-                <div class="alert alert-success mb-0">Connected securely</div>
+                <div class="alert alert-success mb-0">{{ text_paymos_connected|escape }}</div>
               {% else %}
-                <div class="alert alert-warning">Connect this store to Paymos.</div>
+                <div class="alert alert-warning">{{ text_paymos_connect_store|escape }}</div>
               {% endif %}
             </div>
           </div>
@@ -194,8 +194,8 @@
           button.disabled = busy || data.unavailable_reason === 'refund_reconnect_required'
             || !(pending[mode] || (mode === 'full' ? data.can_full : data.can_overpayment));
         });
-        status.textContent = errorBox.hidden ? 'Refund details loaded.' : '';
-      }).catch(function () { if (requestedOrder !== currentOrder) return; disable(); showError('Refund details could not be loaded. Check the order ID and try again.'); });
+        status.textContent = errorBox.hidden ? '{{ text_paymos_refund_loaded|escape('js') }}' : '';
+      }).catch(function () { if (requestedOrder !== currentOrder) return; disable(); showError('{{ text_paymos_refund_load_failed|escape('js') }}'); });
   }
   form.addEventListener('submit', function (event) {
     event.preventDefault(); if (busy) return; clearError(); currentOrder = order.value; load();
@@ -215,8 +215,8 @@
           setBusy(false);
           if (json.error) showError(json.error);
           return load();
-        }).catch(function () { setBusy(false); showError('The refund request failed. Check the refunds below before trying again.'); load(); });
-      } catch (error) { setBusy(false); showError('The refund request was not sent. Reload the page and try again.'); load(); }
+        }).catch(function () { setBusy(false); showError('{{ text_paymos_refund_request_failed|escape('js') }}'); load(); });
+      } catch (error) { setBusy(false); showError('{{ text_paymos_refund_not_sent|escape('js') }}'); load(); }
     });
   });
 }());
@@ -238,7 +238,7 @@ document.getElementById('button-paymos-connect').addEventListener('click', funct
   var status = document.getElementById('paymos-connect-status');
   var manual = false;
   button.disabled = true;
-  status.textContent = 'Starting secure connection…';
+  status.textContent = '{{ text_paymos_connect_starting|escape('js') }}';
   // Opened synchronously: browsers only honour window.open for a few seconds after the
   // click, so opening it once the start request resolves is blocked on slow connections.
   // No feature string — any feature string asks for a popup, which blockers reject.
@@ -251,7 +251,7 @@ document.getElementById('button-paymos-connect').addEventListener('click', funct
       if (json.error) throw new Error(json.error);
       if (tab && !tab.closed) {
         tab.location = json.success.verification_url;
-        status.textContent = 'Waiting for approval. Code: ' + json.success.user_code;
+        status.textContent = '{{ text_paymos_connect_waiting|escape('js') }}' + json.success.user_code;
       } else {
         manual = true;
         status.textContent = '';
@@ -259,10 +259,10 @@ document.getElementById('button-paymos-connect').addEventListener('click', funct
         link.href = json.success.verification_url;
         link.target = '_blank';
         link.rel = 'noopener noreferrer';
-        link.textContent = 'Open the approval page';
-        status.appendChild(document.createTextNode('Your browser blocked the approval tab. '));
+        link.textContent = '{{ text_paymos_connect_open|escape('js') }}';
+        status.appendChild(document.createTextNode('{{ text_paymos_connect_blocked|escape('js') }}'));
         status.appendChild(link);
-        status.appendChild(document.createTextNode(' Code: ' + json.success.user_code));
+        status.appendChild(document.createTextNode('{{ text_paymos_connect_code|escape('js') }}' + json.success.user_code));
       }
       var interval = Math.max(1, Number(json.success.interval || 5)) * 1000;
       window.setTimeout(function poll() {

@@ -36,3 +36,28 @@ $_['button_reconcile'] = 'Conciliar pedidos de Paymos';
 $_['button_confirm'] = 'Pagar con Paymos';
 
 $_['error_permission'] = 'Atención: no tienes permiso para modificar Paymos.';
+
+// Connect and refund interface
+$_['text_paymos_connect'] = 'Conectar Paymos';
+$_['text_paymos_connect_intro'] = 'Conecta esta URL de la tienda al proyecto seleccionado en Paymos.';
+$_['text_paymos_connected'] = 'Conectado de forma segura';
+$_['text_paymos_connect_store'] = 'Conecte esta tienda a Paymos.';
+$_['text_paymos_connect_starting'] = 'Iniciando conexión segura…';
+$_['text_paymos_connect_waiting'] = 'Esperando autorización. Código: ';
+$_['text_paymos_connect_open'] = 'Abrir la página de autorización';
+$_['text_paymos_connect_blocked'] = 'El navegador ha bloqueado la pestaña de autorización. ';
+$_['text_paymos_connect_code'] = ' Código: ';
+$_['text_paymos_refunds'] = 'Reembolsos de Paymos';
+$_['text_paymos_refund_order_id'] = 'ID del pedido';
+$_['text_paymos_refund_show'] = 'Mostrar';
+$_['text_paymos_refund_full'] = 'Reembolsar todo';
+$_['text_paymos_refund_overpayment'] = 'Reembolsar sobrepago';
+$_['text_paymos_refund_operation'] = 'ID de operación';
+$_['text_paymos_refund_type'] = 'Tipo';
+$_['text_paymos_refund_status'] = 'Estado';
+$_['text_paymos_refund_amount'] = 'Importe';
+$_['text_paymos_refund_loaded'] = 'Datos del reembolso cargados.';
+$_['text_paymos_refund_load_failed'] = 'No se han podido cargar los datos. Revise el ID del pedido e inténtelo de nuevo.';
+$_['text_paymos_refund_request_failed'] = 'La solicitud de reembolso ha fallado. Revise los reembolsos de abajo antes de repetirla.';
+$_['text_paymos_refund_not_sent'] = 'La solicitud no se ha enviado. Recargue la página e inténtelo de nuevo.';
+$_['text_paymos_calculated'] = 'Paymos calculará el importe antes de enviar el reembolso.';

@@ -10,6 +10,78 @@ use PaymosOpenCart\CallbackProcessor;
 use PaymosOpenCart\InMemoryEventStore;
 use PaymosOpenCart\InMemoryInvoiceStore;
 
+function opencart_paid_client()
+{
+    return new Client(new ClientConfig('pk_test_123', 'sk_test_123', 'https://api.paymos.test'), new MockTransport(array(
+        new HttpResponse(200, json_encode(opencart_invoice_event('unused', 'invoice.paid', 'paid')['data']), array()),
+    )));
+}
+
+function test_opencart_unapplied_paid_same_event_recovers_after_total_correction_and_stale_confirming()
+{
+    $store = opencart_store_with_status('created');
+    $adapter = new FakeOpenCartAdapter();
+    $adapter->orders[42]['total'] = '110.00';
+    $processor = new CallbackProcessor($adapter, $store, new InMemoryEventStore(), static function () { return opencart_paid_client(); });
+    $paid = json_encode(opencart_invoice_event('evt_recover_same', 'invoice.paid', 'paid'));
+    $signature = opencart_signed_header('whsec_sandbox', $paid, 1709000000);
+    assertSameValue(400, $processor->handle($paid, $signature, opencart_settings(), 1709000000)->statusCode(), 'Mismatched native total must not ACK paid.');
+    assertSameValue('created', $store->findByExternalOrderId('oc_42_0')['status'], 'Unapplied payment remains reconcilable.');
+    $stale = json_encode(opencart_invoice_event('evt_stale_during_review', 'invoice.confirming', 'confirming'));
+    assertSameValue(200, $processor->handle($stale, opencart_signed_header('whsec_sandbox', $stale, 1709000000), opencart_settings(), 1709000000)->statusCode(), 'A stale confirming event can never close the paid retry window.');
+    assertSameValue(1, count($store->findUnpaidRecent(10, 0)), 'The held payment remains in reconciliation candidates.');
+    $adapter->orders[42]['total'] = '100.00';
+    assertSameValue(200, $processor->handle($paid, $signature, opencart_settings(), 1709000000)->statusCode(), 'The exact same event must recover after correction.');
+    assertSameValue(200, $processor->handle($paid, $signature, opencart_settings(), 1709000000)->statusCode(), 'A committed retry is idempotent.');
+    assertSameValue('paid', $store->findByExternalOrderId('oc_42_0')['status'], 'Only successfully applied payment is final.');
+    $paidWrites = array_filter($adapter->histories, static function ($row) { return $row['order_status_id'] === 5; });
+    assertSameValue(1, count($paidWrites), 'Corrected payment must have exactly one paid native effect.');
+}
+
+function test_opencart_order_mutex_serializes_both_webhook_delivery_orders()
+{
+    foreach (array('confirming', 'paid') as $first) {
+        $store = opencart_store_with_status('created');
+        $adapter = new FakeOpenCartAdapter();
+        $a = new CallbackProcessor($adapter, $store, new InMemoryEventStore(), static function () { return opencart_paid_client(); });
+        $b = new CallbackProcessor($adapter, $store, new InMemoryEventStore(), static function () { return opencart_paid_client(); });
+        $second = $first === 'paid' ? 'confirming' : 'paid';
+        $bodyA = json_encode(opencart_invoice_event('evt_first', 'invoice.' . $first, $first));
+        $bodyB = json_encode(opencart_invoice_event('evt_second', 'invoice.' . $second, $second));
+        $adapter->beforeHistory = static function () use ($adapter, $b, $bodyB) {
+            $adapter->beforeHistory = null;
+            $blocked = $b->handle($bodyB, opencart_signed_header('whsec_sandbox', $bodyB, 1709000000), opencart_settings(), 1709000000);
+            assertSameValue(409, $blocked->statusCode(), 'A second event cannot mutate between native guards and write.');
+            assertSameValue(0, count($adapter->histories), 'Blocked delivery has no native effects.');
+        };
+        assertSameValue(200, $a->handle($bodyA, opencart_signed_header('whsec_sandbox', $bodyA, 1709000000), opencart_settings(), 1709000000)->statusCode(), 'The order owner completes.');
+        assertSameValue(200, $b->handle($bodyB, opencart_signed_header('whsec_sandbox', $bodyB, 1709000000), opencart_settings(), 1709000000)->statusCode(), 'Busy delivery releases only its event and can retry.');
+        assertSameValue('paid', $store->findByExternalOrderId('oc_42_0')['status'], 'Final snapshot survives either event order.');
+        assertSameValue(5, $adapter->orders[42]['order_status_id'], 'Native order stays paid after either interleaving.');
+        assertSameValue(1, count(array_filter($adapter->histories, static function ($row) { return $row['order_status_id'] === 5; })), 'One native paid transition.');
+    }
+}
+
+function test_opencart_checkout_and_reconciler_use_the_callback_order_mutex()
+{
+    $store = opencart_store_with_status('created');
+    $adapter = new FakeOpenCartAdapter();
+    $adapter->beforeHistory = static function () use ($store, $adapter) {
+        $adapter->beforeHistory = null;
+        $noNetwork = static function () { throw new RuntimeException('Busy paths must not reach the API.'); };
+        try {
+            (new \PaymosOpenCart\GatewayCheckout($store, $adapter, $noNetwork))->start(42, opencart_settings());
+            throw new RuntimeException('Checkout must not enter the callback order lock.');
+        } catch (\Paymos\Exception\EventInProgressException $expected) {}
+        assertSameValue(0, (new \PaymosOpenCart\Reconciler($store, $adapter, $noNetwork))->run(opencart_settings()), 'Reconcile skips a callback-owned order without native or API effects.');
+    };
+    $body = json_encode(opencart_invoice_event('evt_owner', 'invoice.paid', 'paid'));
+    $result = (new CallbackProcessor($adapter, $store, new InMemoryEventStore(), static function () { return opencart_paid_client(); }))
+        ->handle($body, opencart_signed_header('whsec_sandbox', $body, 1709000000), opencart_settings(), 1709000000);
+    assertSameValue(200, $result->statusCode(), 'Callback completes after competitors leave its order alone.');
+    assertSameValue(1, count($adapter->histories), 'Only the callback can apply native history.');
+}
+
 function test_opencart_callback_marks_order_paid_after_verified_webhook_and_reverse_lookup()
 {
     $store = new InMemoryInvoiceStore();
@@ -92,7 +164,7 @@ function test_opencart_callback_does_not_roll_back_paid_order_on_late_cancel()
     }))->handle($body, $signature, opencart_settings(), 1709000000);
 
     assertSameValue(200, $result->statusCode(), 'late cancel webhook must still return 200.');
-    assertSameValue(5, $adapter->histories[0]['order_status_id'], 'roll-back guard must keep the paid status id, never downgrade to cancelled.');
+    assertSameValue(0, count($adapter->histories), 'A final paid snapshot must not write stale native history.');
 }
 
 function test_opencart_callback_holds_for_manual_review_on_amount_mismatch()
@@ -131,8 +203,8 @@ function test_opencart_callback_holds_for_manual_review_on_amount_mismatch()
         return $client;
     }))->handle($body, $signature, opencart_settings(), 1709000000);
 
-    // Must NOT throw into the retry path (would be 400). Hold for manual review + 200.
-    assertSameValue(200, $result->statusCode(), 'amount mismatch must acknowledge the webhook (200), not retry forever.');
+    assertSameValue(400, $result->statusCode(), 'An unapplied payment must stay retryable after local total correction.');
+    assertSameValue('created', $store->findByExternalOrderId('oc_42_0')['status'], 'An observed payment is not a successfully applied final snapshot.');
     assertSameValue(2, $adapter->histories[0]['order_status_id'], 'amount mismatch must move the order to the confirming/review status id (2), not paid.');
 }
 

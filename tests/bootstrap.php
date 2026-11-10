@@ -192,6 +192,7 @@ function paymos_opencart_write_generated_config($php)
 
 final class FakeOpenCartAdapter implements PaymosOpenCart\OpenCartAdapterInterface
 {
+    public $beforeHistory = null;
     /** @var array<int, array<string, mixed>> */
     public $orders = array();
 
@@ -214,12 +215,14 @@ final class FakeOpenCartAdapter implements PaymosOpenCart\OpenCartAdapterInterfa
 
     public function addOrderHistory($orderId, $orderStatusId, $comment, $notify = false)
     {
+        if ($this->beforeHistory !== null) { call_user_func($this->beforeHistory, $orderId, $orderStatusId); }
         $this->histories[] = array(
             'order_id' => (int) $orderId,
             'order_status_id' => (int) $orderStatusId,
             'comment' => (string) $comment,
             'notify' => (bool) $notify,
         );
+        if (isset($this->orders[(int) $orderId])) { $this->orders[(int) $orderId]['order_status_id'] = (int) $orderStatusId; }
     }
 
     public function log($message, array $context = array())

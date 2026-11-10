@@ -6,6 +6,11 @@ namespace PaymosOpenCart;
 
 interface InvoiceStoreInterface
 {
+    /** Serialize all checkout/callback/reconcile work for one native order. */
+    public function synchronized($orderId, callable $action);
+
+    public function assertLocked($orderId);
+
     /**
      * @return array<string, mixed>|null
      */

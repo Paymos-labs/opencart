@@ -36,3 +36,28 @@ $_['button_reconcile'] = 'Сверить заказы Paymos';
 $_['button_confirm'] = 'Оплатить через Paymos';
 
 $_['error_permission'] = 'Внимание: у вас нет прав на изменение настроек Paymos.';
+
+// Connect and refund interface
+$_['text_paymos_connect'] = 'Подключить Paymos';
+$_['text_paymos_connect_intro'] = 'Подключает этот адрес магазина к проекту, выбранному в Paymos.';
+$_['text_paymos_connected'] = 'Подключено';
+$_['text_paymos_connect_store'] = 'Подключите магазин к Paymos.';
+$_['text_paymos_connect_starting'] = 'Подключаем магазин…';
+$_['text_paymos_connect_waiting'] = 'Ожидаем подтверждения. Код: ';
+$_['text_paymos_connect_open'] = 'Открыть страницу подтверждения';
+$_['text_paymos_connect_blocked'] = 'Браузер заблокировал вкладку подтверждения. ';
+$_['text_paymos_connect_code'] = ' Код: ';
+$_['text_paymos_refunds'] = 'Возвраты Paymos';
+$_['text_paymos_refund_order_id'] = 'Номер заказа';
+$_['text_paymos_refund_show'] = 'Показать';
+$_['text_paymos_refund_full'] = 'Вернуть всю сумму';
+$_['text_paymos_refund_overpayment'] = 'Вернуть переплату';
+$_['text_paymos_refund_operation'] = 'Номер операции';
+$_['text_paymos_refund_type'] = 'Тип';
+$_['text_paymos_refund_status'] = 'Статус';
+$_['text_paymos_refund_amount'] = 'Сумма';
+$_['text_paymos_refund_loaded'] = 'Данные возврата загружены.';
+$_['text_paymos_refund_load_failed'] = 'Не удалось загрузить возвраты. Проверьте номер заказа и попробуйте снова.';
+$_['text_paymos_refund_request_failed'] = 'Не удалось отправить запрос. Проверьте возвраты ниже, прежде чем повторять.';
+$_['text_paymos_refund_not_sent'] = 'Запрос на возврат не отправлен. Обновите страницу и попробуйте снова.';
+$_['text_paymos_calculated'] = 'Paymos рассчитает сумму перед отправкой возврата.';

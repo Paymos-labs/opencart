@@ -9,6 +9,20 @@ use Paymos\Http\MockTransport;
 use PaymosOpenCart\InMemoryInvoiceStore;
 use PaymosOpenCart\Reconciler;
 
+function test_opencart_reconciler_retries_unapplied_paid_after_native_total_correction()
+{
+    $store = opencart_store_with_status('created');
+    $adapter = new FakeOpenCartAdapter();
+    $adapter->orders[42]['total'] = '110.00';
+    $reconciler = new Reconciler($store, $adapter, static function () { return opencart_paid_client(); });
+    assertSameValue(0, $reconciler->run(opencart_settings()), 'Mismatched native total cannot be applied.');
+    assertSameValue('created', $store->findByExternalOrderId('oc_42_0')['status'], 'Unapplied API status must not remove reconciliation candidate.');
+    $adapter->orders[42]['total'] = '100.00';
+    assertSameValue(1, $reconciler->run(opencart_settings()), 'Next pass recovers payment after correction.');
+    assertSameValue(0, $reconciler->run(opencart_settings()), 'Applied final invoice is no longer a reconciliation candidate.');
+    assertSameValue(1, count(array_filter($adapter->histories, static function ($row) { return $row['order_status_id'] === 5; })), 'Reconciliation must complete the native order exactly once.');
+}
+
 function test_opencart_reconciler_applies_paid_invoice_when_webhook_was_missed()
 {
     $store = new InMemoryInvoiceStore();
