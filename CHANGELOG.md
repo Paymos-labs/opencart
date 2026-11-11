@@ -8,6 +8,10 @@ The public release history also lives at [paymos.io/changelog](https://paymos.io
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-11-11
+
+- chore: rebuild canonical CMS package
+
 ## [1.5.0] - 2026-11-10
 
 - fix(opencart,release): restore separated Node refund panel preflight and 6-locale JS harness
