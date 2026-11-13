@@ -379,3 +379,94 @@ function test_opencart_admin_without_a_store_instance_fails_the_row_clearly()
 
     assertContainsValue('createStoreInstance', (string) $threw, 'the failure must name what the admin is missing.');
 }
+
+function test_opencart_reconciler_reports_all_failures_as_error_with_api_detail_and_partial_as_warning()
+{
+    // A12-06: failing every unpaid row must surface API detail as an error
+    // instead of reporting 0 orders completed; mixed success+failure returns a warning.
+    $store = new InMemoryInvoiceStore();
+    $store->save(array(
+        'opencart_order_id' => 42,
+        'paymos_invoice_id' => 'inv_123',
+        'external_order_id' => 'oc_42_0',
+        'environment' => 'sandbox',
+        'project_id' => 'prj_123',
+        'amount' => '100.00',
+        'currency' => 'USD',
+        'payment_url' => 'https://checkout.paymos.test/inv_123',
+        'status' => 'created',
+        'renew_count' => 0,
+        'created_at' => date('Y-m-d H:i:s', 1708990000),
+    ));
+    $store->save(array(
+        'opencart_order_id' => 43,
+        'paymos_invoice_id' => 'inv_456',
+        'external_order_id' => 'oc_43_0',
+        'environment' => 'sandbox',
+        'project_id' => 'prj_123',
+        'amount' => '100.00',
+        'currency' => 'USD',
+        'payment_url' => 'https://checkout.paymos.test/inv_456',
+        'status' => 'created',
+        'renew_count' => 0,
+        'created_at' => date('Y-m-d H:i:s', 1708990001),
+    ));
+    $adapter = new FakeOpenCartAdapter();
+    $problem = static function ($status, $detail) {
+        return new HttpResponse($status, json_encode(array(
+            'type' => 'about:blank',
+            'title' => 'Error',
+            'status' => $status,
+            'detail' => $detail,
+            'code' => 'api_error',
+        )), array('Content-Type' => 'application/problem+json'));
+    };
+
+    $allFailClient = new Client(
+        new ClientConfig('pk_test_123', 'sk_test_123', 'https://api.paymos.test'),
+        new MockTransport(array($problem(401, 'Invalid API key.'), $problem(401, 'Invalid API key.')))
+    );
+    $allFailResult = (new Reconciler($store, $adapter, static function () use ($allFailClient) {
+        return $allFailClient;
+    }))->runDetailed(opencart_settings(), 1709000000);
+
+    assertSameValue(0, $allFailResult['checked'], 'Total API failure leaves zero checked rows.');
+    assertSameValue(0, $allFailResult['applied'], 'Total API failure applies zero rows.');
+    assertSameValue(2, $allFailResult['failed'], 'Every failed row increments failed counter.');
+    $allFailResponse = \Opencart\Admin\Controller\Extension\Paymos\Payment\Paymos::reconcileResponse(
+        $allFailResult,
+        'Paymos reconciliation completed. Orders completed: %s.'
+    );
+    assertTrueValue(isset($allFailResponse['error']) && !isset($allFailResponse['success']), 'Total failure returns error without success.');
+    assertContainsValue('Invalid API key.', $allFailResponse['error'], 'API detail reaches controller error response.');
+
+    $partialClient = new Client(
+        new ClientConfig('pk_test_123', 'sk_test_123', 'https://api.paymos.test'),
+        new MockTransport(array(
+            // InMemoryInvoiceStore::findUnpaidRecent iterates reverse insertion order: 43 first, then 42.
+            new HttpResponse(200, json_encode(array(
+                'invoice_id' => 'inv_456',
+                'project_id' => 'prj_123',
+                'status' => 'paid',
+                'is_test' => true,
+                'order' => array('external_id' => 'oc_43_0', 'amount' => '100.00', 'currency' => 'USD'),
+            )), array()),
+            $problem(403, 'Upstream unavailable.'),
+        ))
+    );
+    $adapter->orders[43] = opencart_order(array('order_id' => 43));
+    $partialResult = (new Reconciler($store, $adapter, static function () use ($partialClient) {
+        return $partialClient;
+    }))->runDetailed(opencart_settings(), 1709000000);
+
+    assertSameValue(1, $partialResult['checked'], 'Partial run counts checked invoice.');
+    assertSameValue(1, $partialResult['applied'], 'Partial run applies completed invoice.');
+    assertSameValue(1, $partialResult['failed'], 'Partial run preserves failed count.');
+    $partialResponse = \Opencart\Admin\Controller\Extension\Paymos\Payment\Paymos::reconcileResponse(
+        $partialResult,
+        'Paymos reconciliation completed. Orders completed: %s.'
+    );
+    assertTrueValue(isset($partialResponse['warning']) && !isset($partialResponse['success']), 'Partial failure surfaces warning instead of plain success.');
+    assertContainsValue('Orders completed: 1.', $partialResponse['warning'], 'Partial warning preserves completed count.');
+    assertContainsValue('Upstream unavailable.', $partialResponse['warning'], 'Partial warning includes failure detail.');
+}

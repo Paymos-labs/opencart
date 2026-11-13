@@ -8,6 +8,11 @@ The public release history also lives at [paymos.io/changelog](https://paymos.io
 
 ## [Unreleased]
 
+## [1.5.6] - 2026-11-13
+
+- merge: integrate Windows WIP onto origin/main (CMS binding, SDK preview, dashboard, plugins, specs)
+- chore: bundle Paymos PHP SDK v1.10.2
+
 ## [1.5.5] - 2026-11-13
 
 - chore: rebuild canonical CMS package

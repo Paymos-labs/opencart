@@ -34,12 +34,21 @@ final class Reconciler
      */
     public function run(array $settings, $now = null)
     {
+        return $this->runDetailed($settings, $now)['applied'];
+    }
+
+    /** @return array{checked:int,applied:int,failed:int,errors:array} */
+    public function runDetailed(array $settings, $now = null): array
+    {
         $now = $now === null ? time() : (int) $now;
         $count = 0;
+        $checked = 0;
+        $failed = 0;
+        $errors = array();
 
         foreach ($this->store->findUnpaidRecent(50, $now - 86400) as $row) {
             try {
-                $applied = $this->store->synchronized($row['opencart_order_id'], function () use ($row, $settings, $now) {
+                $applied = $this->store->synchronized($row['opencart_order_id'], function () use ($row, $settings, $now, &$checked) {
                     $fresh = $this->store->findByExternalOrderId($row['external_order_id']);
                     if (!is_array($fresh) || (int) $fresh['opencart_order_id'] !== (int) $row['opencart_order_id']
                         || StatusMapper::isFinalStatus((string) $fresh['status'])
@@ -54,8 +63,10 @@ final class Reconciler
                             'invoice' => $invoice,
                             'row' => $row,
                         ));
-                        return false;
+                        throw new \RuntimeException('Paymos invoice does not match the saved order.');
                     }
+
+                    $checked++;
 
                     return (new CallbackProcessor($this->opencart, $this->store, new InMemoryEventStore(), $this->clientFactory))
                         ->applyTrustedInvoice($invoice, $row, $settings, $now);
@@ -63,7 +74,10 @@ final class Reconciler
                 if ($applied) {
                     $count++;
                 }
-            } catch (\Exception $e) {
+            } catch (\Throwable $e) {
+                $failed++;
+                $detail = $e instanceof \Paymos\Exception\ApiException ? trim((string) $e->detail()) : '';
+                $errors[] = $detail !== '' ? $detail : $e->getMessage();
                 $this->opencart->log('Paymos reconcile failed.', array(
                     'error' => $e->getMessage(),
                     'row' => $row,
@@ -72,9 +86,17 @@ final class Reconciler
         }
 
         if ($this->refundAdapter !== null) {
-            $count += $this->refundAdapter->runDue(new \DateTimeImmutable('@' . $now));
+            try { $count += $this->refundAdapter->runDue(new \DateTimeImmutable('@' . $now)); }
+            catch (\Throwable $e) {
+                $failed++;
+                $detail = $e instanceof \Paymos\Exception\ApiException ? trim((string) $e->detail()) : '';
+                $errors[] = $detail !== '' ? $detail : $e->getMessage();
+            }
         }
-        return $count;
+        $errors = array_values(array_unique(array_filter($errors, static function ($message) {
+            return trim((string) $message) !== '';
+        })));
+        return array('checked' => $checked, 'applied' => $count, 'failed' => $failed, 'errors' => $errors);
     }
 
     /**

@@ -177,18 +177,33 @@ class Paymos extends \Opencart\System\Engine\Controller
 
         if (!$json) {
             \PaymosOpenCart\Migrations::ensure($this->db);
-            $count = (new \PaymosOpenCart\Reconciler(
+            $result = (new \PaymosOpenCart\Reconciler(
                 new \PaymosOpenCart\InvoiceStore($this->db),
                 new \PaymosOpenCart\OpenCartAdapter($this->registry),
                 null,
                 \PaymosOpenCart\RefundAdapter::fromRegistry($this->registry, $this->settings())
-            ))->run($this->settings());
+            ))->runDetailed($this->settings());
 
-            $json['success'] = sprintf($this->language->get('text_reconcile_success'), $count);
+            $json = self::reconcileResponse($result, $this->language->get('text_reconcile_success'));
         }
 
         $this->response->addHeader('Content-Type: application/json');
         $this->response->setOutput(json_encode($json));
+    }
+
+    public static function reconcileResponse(array $result, string $successTemplate): array
+    {
+        $message = sprintf($successTemplate, $result['applied']);
+        $json = array('result' => $result);
+        if ($result['failed'] > 0) {
+            $reason = implode('; ', $result['errors']);
+            $key = $result['checked'] === 0 && $result['applied'] === 0 ? 'error' : 'warning';
+            if ($key === 'warning' && $result['applied'] > 0) {
+                $reason = trim($message . ' ' . $reason);
+            }
+            $json[$key] = $reason !== '' ? $reason : 'Paymos reconcile failed.';
+        } else { $json['success'] = $message; }
+        return $json;
     }
 
     public function install(): void

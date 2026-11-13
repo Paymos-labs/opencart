@@ -231,6 +231,12 @@ document.getElementById('button-paymos-reconcile').addEventListener('click', fun
       if (json.success) {
         alert(json.success);
       }
+      if (json.warning) {
+        alert(json.warning);
+      }
+    })
+    .catch(function (err) {
+      alert((err && err.message) ? err.message : 'Paymos reconcile failed.');
     });
 });
 document.getElementById('button-paymos-connect').addEventListener('click', function () {
