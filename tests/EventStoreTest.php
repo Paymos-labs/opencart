@@ -47,6 +47,9 @@ final class FakeOpenCartEventDb
     /** @var bool Whether the events table has the owner_token column yet. */
     public $hasOwnerTokenColumn = false;
 
+    /** @var \Exception|null Thrown by every INSERT while set; SELECT keeps working. */
+    public $insertFailure = null;
+
     public function escape($value)
     {
         return addslashes((string) $value);
@@ -94,6 +97,9 @@ final class FakeOpenCartEventDb
                 $result->rows = array($result->row);
             }
         } elseif (preg_match("/^INSERT INTO `[^`]+` SET `event_id` = '([^']*)', `owner_token` = '([^']*)', `expires_at` = '(\d+)', `created_at` = '(\d+)'/", $sql, $m)) {
+            if ($this->insertFailure !== null) {
+                throw $this->insertFailure;
+            }
             if (isset($this->rows[$m[1]])) {
                 throw new Exception('Duplicate entry');
             }
@@ -244,4 +250,65 @@ function test_opencart_zero_row_commit_is_reported_as_not_owned()
     assertTrueValue($store->remember('evt_zero_rows', 604800), 'reserve before the row disappears.');
     unset($db->rows['evt_zero_rows']);
     assertFalseValue($store->commit(), 'a commit that matched zero rows must report lost ownership.');
+}
+
+/**
+ * A46-02: a failing INSERT that is not a duplicate key is a storage fault. It
+ * must not be reported as "another delivery holds this event" (409); the
+ * callback answers 500, writes no order effect and commits no event.
+ */
+function test_opencart_event_store_storage_failure_is_not_classified_as_in_progress()
+{
+    $db = new FakeOpenCartEventDb();
+    $db->insertFailure = new Exception("Error: Table 'paymos_event' is read only<br/>Error No: 1036<br/>INSERT INTO ...");
+
+    $store = new PaymosOpenCart\EventStore($db);
+    $threw = null;
+    try {
+        $store->remember('evt_storage_down', 604800);
+    } catch (PaymosOpenCart\EventStorageException $e) {
+        $threw = $e;
+    }
+    assertTrueValue($threw !== null, 'a non-duplicate INSERT failure must raise a storage error, not return "seen".');
+    assertSameValue($db->insertFailure, $threw->getPrevious(), 'the original database error is kept for diagnostics.');
+    assertFalseValue(isset($db->rows['evt_storage_down']), 'no reservation row exists after the failed INSERT.');
+
+    $invoices = new PaymosOpenCart\InMemoryInvoiceStore();
+    $invoices->save(array(
+        'opencart_order_id' => 42,
+        'paymos_invoice_id' => 'inv_123',
+        'external_order_id' => 'oc_42_0',
+        'environment' => 'sandbox',
+        'project_id' => 'prj_123',
+        'amount' => '100.00',
+        'currency' => 'USD',
+        'payment_url' => 'https://checkout.paymos.test/inv_123',
+        'status' => 'created',
+        'renew_count' => 0,
+    ));
+    $adapter = new FakeOpenCartAdapter();
+    $transport = new \Paymos\Http\MockTransport(array());
+    $client = new \Paymos\Client(new \Paymos\ClientConfig('pk_test_123', 'sk_test_123', 'https://api.paymos.test'), $transport);
+    $body = json_encode(opencart_invoice_event('evt_storage_down', 'invoice.paid', 'paid'));
+    $result = (new PaymosOpenCart\CallbackProcessor($adapter, $invoices, new PaymosOpenCart\EventStore($db), static function () use ($client) {
+        return $client;
+    }))->handle($body, opencart_signed_header('whsec_sandbox', $body, 1709000000), opencart_settings(), 1709000000);
+
+    assertSameValue(500, $result->statusCode(), 'a storage failure is answered 500, not 409.');
+    assertSameValue(0, count($adapter->histories), 'no order effect is applied without a stored reservation.');
+    assertSameValue(0, count($transport->requests()), 'processing stops before reverse verification.');
+    assertSameValue('created', $invoices->findByExternalOrderId('oc_42_0')['status'], 'the invoice snapshot is unchanged.');
+    assertFalseValue((new PaymosOpenCart\EventStore($db))->isCommitted('evt_storage_down'), 'no committed event exists.');
+
+    // Duplicate key is still a race, and a live reservation is still 409.
+    $db->insertFailure = null;
+    $owner = new PaymosOpenCart\EventStore($db);
+    assertTrueValue($owner->remember('evt_storage_down', 604800), 'once storage works the event is reserved.');
+    $busy = (new PaymosOpenCart\CallbackProcessor($adapter, $invoices, new PaymosOpenCart\EventStore($db), static function () use ($client) {
+        return $client;
+    }))->handle($body, opencart_signed_header('whsec_sandbox', $body, 1709000000), opencart_settings(), 1709000000);
+    assertSameValue(409, $busy->statusCode(), 'a live reservation held by another delivery stays 409.');
+
+    $db->insertFailure = new Exception("Error: Duplicate entry 'evt_x' for key 'PRIMARY'<br/>Error No: 1062<br/>INSERT INTO ...");
+    assertFalseValue((new PaymosOpenCart\EventStore($db))->remember('evt_x', 604800), 'a duplicate-key INSERT failure is still reported as seen.');
 }

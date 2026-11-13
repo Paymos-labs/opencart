@@ -13,6 +13,9 @@ use Paymos\Plugin\StatusMapper;
 
 final class GatewayCheckout
 {
+    /** Snapshot status of a create whose POST was sent but whose result is not bound yet. */
+    const STATUS_CREATING = 'creating';
+
     /** @var InvoiceStoreInterface */
     private $store;
 
@@ -65,6 +68,12 @@ final class GatewayCheckout
         $amount = $this->opencart->orderAmount($order);
         $currency = strtoupper($this->field($order, 'currency_code'));
         $existing = $this->store->findByOpenCartOrderId($orderId);
+        if (is_array($existing) && self::isPendingIntent($existing)) {
+            // A previous create may have been accepted by the server while its
+            // response or the local bind was lost (A46-01). Replay that exact
+            // operation first; only the invoice it yields may be replaced.
+            $existing = $this->recoverPendingIntent($orderId, $order, $existing, $config);
+        }
 
         if (is_array($existing) && $this->snapshotMatches($existing, $amount, $currency, $config)
             && $this->keepsExistingInvoice($existing, $config)) {
@@ -82,8 +91,98 @@ final class GatewayCheckout
         $renewCount = is_array($existing) && isset($existing['renew_count']) ? ((int) $existing['renew_count'] + 1) : 0;
         $externalOrderId = 'oc_' . (int) $orderId . '_' . $renewCount;
         $payload = $this->createPayload($order, $config, $amount, $currency, $externalOrderId);
-        $response = $this->client($config)->invoices()->create($payload);
 
+        // The operation identity (external_order_id) and every field the server
+        // compares on a repeated key (project, amount, currency, environment) are
+        // stored BEFORE the POST. If its result is lost, the next checkout replays
+        // exactly this request instead of re-sending the key with a new amount.
+        $intent = array(
+            'opencart_order_id' => (int) $orderId,
+            'paymos_invoice_id' => self::pendingInvoiceId($externalOrderId),
+            'external_order_id' => $externalOrderId,
+            'environment' => $config->environment(),
+            'project_id' => $config->projectId(),
+            'amount' => $amount,
+            'currency' => $currency,
+            'payment_url' => '',
+            'status' => self::STATUS_CREATING,
+            'renew_count' => $renewCount,
+        );
+        $this->store->assertLocked($orderId);
+        $this->store->save($intent);
+
+        $response = $this->client($config)->invoices()->create($payload);
+        $row = $this->bindCreatedInvoice($orderId, $config, $intent, $response);
+
+        return array(
+            'invoice_id' => (string) $row['paymos_invoice_id'],
+            'payment_url' => (string) $row['payment_url'],
+            'reused' => '0',
+        );
+    }
+
+    /**
+     * Whether the row is a create intent stored before its POST and not yet
+     * bound to the invoice the server returned. Such a row has no Paymos
+     * invoice id: callbacks cannot match it and the reconciler skips it.
+     *
+     * @param array<string, mixed> $row
+     */
+    public static function isPendingIntent(array $row)
+    {
+        return isset($row['status']) && (string) $row['status'] === self::STATUS_CREATING;
+    }
+
+    /**
+     * Placeholder for the unique paymos_invoice_id column while the intent is
+     * pending: unique per external_order_id, never a real Paymos invoice id.
+     */
+    private static function pendingInvoiceId($externalOrderId)
+    {
+        return 'pending:' . $externalOrderId;
+    }
+
+    /**
+     * Replays the stored create request: same project, external_order_id,
+     * amount and currency, sent to the environment it was first sent to. The
+     * server answers a repeated key with the invoice it already made, so this
+     * learns the invoice the lost response carried. On any failure the intent
+     * stays pending and the checkout stops; no new key is cut over it.
+     *
+     * @param array<string, mixed> $order
+     * @param array<string, mixed> $intent
+     * @return array<string, mixed>
+     */
+    private function recoverPendingIntent($orderId, array $order, array $intent, Config $config)
+    {
+        $payload = array(
+            'project_id' => (string) $intent['project_id'],
+            'amount' => (string) $intent['amount'],
+            'currency' => (string) $intent['currency'],
+            'external_order_id' => (string) $intent['external_order_id'],
+        );
+        // Not compared by the server on a repeated key; derived from the order
+        // exactly as on the first attempt.
+        $clientId = $this->clientId($order);
+        if ($clientId !== '') {
+            $payload['client_id'] = $clientId;
+        }
+
+        $response = $this->client($config, (string) $intent['environment'])->invoices()->create($payload);
+
+        return $this->bindCreatedInvoice($orderId, $config, $intent, $response);
+    }
+
+    /**
+     * Records the invoice the server returned for a stored intent, then the
+     * awaiting-payment order history.
+     *
+     * @param array<string, mixed> $intent
+     * @param array<string, mixed> $response
+     * @return array<string, mixed>
+     */
+    private function bindCreatedInvoice($orderId, Config $config, array $intent, array $response)
+    {
         $paymosInvoiceId = $this->responseField($response, array('invoice_id'));
         if ($paymosInvoiceId === '') {
             $paymosInvoiceId = $this->responseField($response, array('id'));
@@ -104,20 +203,12 @@ final class GatewayCheckout
         // response. Observation is not native application: leave it available
         // to the verified callback/reconciler instead of fencing both out.
         $observedStatus = $this->responseField($response, array('status')) ?: 'created';
-        $snapshotStatus = StatusMapper::isFinalStatus($observedStatus) ? 'created' : $observedStatus;
+        $row = $intent;
+        $row['paymos_invoice_id'] = $paymosInvoiceId;
+        $row['payment_url'] = $paymentUrl;
+        $row['status'] = StatusMapper::isFinalStatus($observedStatus) ? 'created' : $observedStatus;
         $this->store->assertLocked($orderId);
-        $this->store->save(array(
-            'opencart_order_id' => (int) $orderId,
-            'paymos_invoice_id' => $paymosInvoiceId,
-            'external_order_id' => $externalOrderId,
-            'environment' => $config->environment(),
-            'project_id' => $config->projectId(),
-            'amount' => $amount,
-            'currency' => $currency,
-            'payment_url' => $paymentUrl,
-            'status' => $snapshotStatus,
-            'renew_count' => $renewCount,
-        ));
+        $this->store->save($row);
 
         $this->opencart->addOrderHistory(
             $orderId,
@@ -126,11 +217,7 @@ final class GatewayCheckout
             false
         );
 
-        return array(
-            'invoice_id' => $paymosInvoiceId,
-            'payment_url' => $paymentUrl,
-            'reused' => '0',
-        );
+        return $row;
     }
 
     /**

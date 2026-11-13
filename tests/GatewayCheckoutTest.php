@@ -529,3 +529,190 @@ function test_opencart_checkout_asks_the_buyer_to_contact_the_store_when_the_old
     $controller = (string) file_get_contents(PAYMOS_OPENCART_PLUGIN_DIR . 'catalog/controller/payment/paymos.php');
     assertContainsValue('GatewayCheckout::buyerErrorKey($e)', $controller, 'the checkout controller picks the message by the failure.');
 }
+
+/**
+ * Transport that records every request and answers from a script; a scripted
+ * \Exception is thrown after the request is recorded: the server received the
+ * POST, the plugin never learned its result.
+ */
+final class OpenCartScriptedTransport implements \Paymos\Http\TransportInterface
+{
+    /** @var array<int, HttpResponse|\Exception> */
+    private $script;
+
+    /** @var array<int, array<string, mixed>> */
+    private $requests = array();
+
+    public function __construct(array $script)
+    {
+        $this->script = array_values($script);
+    }
+
+    public function request($method, $url, array $headers, $body, $timeoutSeconds)
+    {
+        $this->requests[] = array('method' => (string) $method, 'url' => (string) $url, 'body' => (string) $body);
+        if (count($this->script) === 0) {
+            throw new \RuntimeException('No scripted response for ' . $method . ' ' . $url);
+        }
+        $next = array_shift($this->script);
+        if ($next instanceof \Exception) {
+            throw $next;
+        }
+
+        return $next;
+    }
+
+    public function requests()
+    {
+        return $this->requests;
+    }
+}
+
+/** Store whose next save() of a bound (non-intent) row fails once. */
+final class OpenCartFailingBindStore implements PaymosOpenCart\InvoiceStoreInterface
+{
+    /** @var InMemoryInvoiceStore */
+    public $inner;
+
+    /** @var bool */
+    public $failNextBind = false;
+
+    public function __construct(InMemoryInvoiceStore $inner)
+    {
+        $this->inner = $inner;
+    }
+
+    public function synchronized($orderId, callable $action) { return $this->inner->synchronized($orderId, $action); }
+    public function assertLocked($orderId) { $this->inner->assertLocked($orderId); }
+    public function findByOpenCartOrderId($orderId) { return $this->inner->findByOpenCartOrderId($orderId); }
+    public function findByExternalOrderId($externalOrderId) { return $this->inner->findByExternalOrderId($externalOrderId); }
+    public function updateStatus($paymosInvoiceId, $status) { $this->inner->updateStatus($paymosInvoiceId, $status); }
+    public function findUnpaidRecent($limit, $sinceTimestamp) { return $this->inner->findUnpaidRecent($limit, $sinceTimestamp); }
+
+    public function save(array $row)
+    {
+        if ($this->failNextBind && !GatewayCheckout::isPendingIntent($row)) {
+            $this->failNextBind = false;
+            throw new \RuntimeException('database write failed');
+        }
+        $this->inner->save($row);
+    }
+}
+
+function opencart_created_response($invoiceId, $status = 'awaiting_client')
+{
+    return new HttpResponse(201, json_encode(array(
+        'invoice_id' => $invoiceId,
+        'status' => $status,
+        'payment_url' => 'https://checkout.paymos.test/' . $invoiceId,
+    )), array());
+}
+
+function opencart_start_expecting_failure(GatewayCheckout $checkout)
+{
+    try {
+        $checkout->start(42, opencart_settings());
+    } catch (\Exception $e) {
+        return $e;
+    }
+
+    throw new RuntimeException('checkout must fail while the create result is unknown.');
+}
+
+/**
+ * A46-01: the first create reaches the server but its response is lost; the
+ * order total then changes. The next checkout must replay the stored request
+ * (same key, same amount) to learn the invoice, close it, and only then cut
+ * the next generation. It never re-sends oc_42_0 with the new amount.
+ */
+function test_opencart_lost_create_response_recovers_original_payload_before_amount_change()
+{
+    $store = new InMemoryInvoiceStore();
+    $adapter = new FakeOpenCartAdapter();
+    $transport = new OpenCartScriptedTransport(array(
+        new \RuntimeException('timeout after the request was sent'),
+        new \RuntimeException('still unreachable'),
+        opencart_created_response('inv_lost'),
+        opencart_live_invoice_response('inv_lost', 'cancelled', time() + 600),
+        opencart_created_response('inv_new'),
+    ));
+    $client = new Client(new ClientConfig('pk_test_123', 'sk_test_123', 'https://api.paymos.test'), $transport);
+    $factory = static function () use ($client) { return $client; };
+
+    opencart_start_expecting_failure(new GatewayCheckout($store, $adapter, $factory));
+    $intent = $store->findByOpenCartOrderId(42);
+    assertSameValue('creating', $intent['status'], 'the create intent is stored before the POST.');
+    assertSameValue('oc_42_0', $intent['external_order_id'], 'the intent carries the idempotency key.');
+    assertSameValue('100.00', $intent['amount'], 'the intent carries the original amount.');
+    assertSameValue(0, count($adapter->histories), 'no order history is written for an unknown create result.');
+
+    $adapter->orders[42] = opencart_order(array('total' => '120.00'));
+
+    // The replay itself fails: nothing new is created over the unknown invoice.
+    opencart_start_expecting_failure(new GatewayCheckout($store, $adapter, $factory));
+    assertSameValue(2, count($transport->requests()), 'only the replay was attempted.');
+    assertSameValue(null, $store->findByExternalOrderId('oc_42_1'), 'no next generation exists while the first result is unknown.');
+
+    $result = (new GatewayCheckout($store, $adapter, $factory))->start(42, opencart_settings());
+
+    $requests = $transport->requests();
+    $original = json_decode($requests[0]['body'], true);
+    assertSameValue(5, count($requests), 'create (lost), replay (failed), replay, cancel, create.');
+    foreach (array(1, 2) as $replay) {
+        assertSameValue($original, json_decode($requests[$replay]['body'], true), 'the replay sends exactly the original payload.');
+    }
+    assertSameValue('100.00', $original['amount'], 'the original payload kept the original amount.');
+    assertSameValue('https://api.paymos.test/v1/invoices/inv_lost/cancel', $requests[3]['url'], 'the recovered invoice is closed before replacement.');
+    $next = json_decode($requests[4]['body'], true);
+    assertSameValue('oc_42_1', $next['external_order_id'], 'the new amount goes out under the next key.');
+    assertSameValue('120.00', $next['amount'], 'the next generation carries the new amount.');
+
+    assertSameValue('inv_lost', $store->findByExternalOrderId('oc_42_0')['paymos_invoice_id'], 'the recovered invoice is bound to its key.');
+    assertSameValue('cancelled', $store->findByExternalOrderId('oc_42_0')['status'], 'the recovered invoice records its close.');
+    assertSameValue('https://checkout.paymos.test/inv_new', $result['payment_url'], 'the buyer is sent to the new invoice.');
+}
+
+/**
+ * A46-01: the POST succeeds but the local bind fails. The next checkout
+ * replays the identical request and binds the invoice the server already made.
+ */
+function test_opencart_failed_bind_after_create_replays_the_same_request()
+{
+    $store = new OpenCartFailingBindStore(new InMemoryInvoiceStore());
+    $store->failNextBind = true;
+    $adapter = new FakeOpenCartAdapter();
+    $transport = new OpenCartScriptedTransport(array(
+        opencart_created_response('inv_123'),
+        opencart_created_response('inv_123'),
+        opencart_live_invoice_response('inv_123', 'awaiting_client', time() + 600),
+    ));
+    $client = new Client(new ClientConfig('pk_test_123', 'sk_test_123', 'https://api.paymos.test'), $transport);
+    $factory = static function () use ($client) { return $client; };
+
+    opencart_start_expecting_failure(new GatewayCheckout($store, $adapter, $factory));
+    assertSameValue('creating', $store->findByOpenCartOrderId(42)['status'], 'the intent survives the failed bind.');
+
+    $result = (new GatewayCheckout($store, $adapter, $factory))->start(42, opencart_settings());
+
+    $requests = $transport->requests();
+    assertSameValue(array('POST', 'POST', 'GET'), array_column($requests, 'method'), 'create, replay, liveness read.');
+    assertSameValue($requests[0]['body'], $requests[1]['body'], 'the replay is byte-identical to the first create.');
+    assertSameValue('inv_123', $store->findByOpenCartOrderId(42)['paymos_invoice_id'], 'the invoice is bound after the replay.');
+    assertSameValue('oc_42_0', $store->findByOpenCartOrderId(42)['external_order_id'], 'no new key is cut.');
+    assertSameValue('https://checkout.paymos.test/inv_123', $result['payment_url'], 'the buyer gets the one invoice the server made.');
+}
+
+/** A46-01: the reconciler never reads a create intent that has no invoice id yet. */
+function test_opencart_reconciler_skips_a_pending_create_intent()
+{
+    $store = new InMemoryInvoiceStore();
+    $transport = new OpenCartScriptedTransport(array(new \RuntimeException('lost')));
+    $client = new Client(new ClientConfig('pk_test_123', 'sk_test_123', 'https://api.paymos.test'), $transport);
+    $factory = static function () use ($client) { return $client; };
+    $adapter = new FakeOpenCartAdapter();
+    opencart_start_expecting_failure(new GatewayCheckout($store, $adapter, $factory));
+
+    assertSameValue(0, (new \PaymosOpenCart\Reconciler($store, $adapter, $factory))->run(opencart_settings()), 'nothing is applied.');
+    assertSameValue(1, count($transport->requests()), 'no GET is sent for a placeholder id.');
+    assertSameValue(0, count($adapter->logs), 'a pending intent is not a reconcile failure.');
+}

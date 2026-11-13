@@ -42,7 +42,10 @@ final class Reconciler
                 $applied = $this->store->synchronized($row['opencart_order_id'], function () use ($row, $settings, $now) {
                     $fresh = $this->store->findByExternalOrderId($row['external_order_id']);
                     if (!is_array($fresh) || (int) $fresh['opencart_order_id'] !== (int) $row['opencart_order_id']
-                        || StatusMapper::isFinalStatus((string) $fresh['status'])) { return false; }
+                        || StatusMapper::isFinalStatus((string) $fresh['status'])
+                        // A create intent has no Paymos invoice id to read yet; the
+                        // next checkout of the order replays and binds it.
+                        || GatewayCheckout::isPendingIntent($fresh)) { return false; }
                     $row = $fresh;
                     $invoice = $this->client((string) $row['environment'], $settings)->invoices()->get((string) $row['paymos_invoice_id']);
                     $this->store->assertLocked($row['opencart_order_id']);

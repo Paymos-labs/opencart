@@ -179,7 +179,14 @@ function test_opencart_network_connection_loss_fences_checkout_callback_and_reco
         }
         assertSameValue(0, count($adapter->histories), 'Lost ownership must prevent every native history effect.');
         assertSameValue('', $db->last('UPDATE'), 'No snapshot status update is allowed after connection loss.');
-        assertSameValue('', $db->last('INSERT'), 'Checkout cannot bind a response after losing its lock.');
+        if ($path === 'checkout') {
+            // A46-01: the create intent is written while the lock is still held,
+            // before the POST. Nothing carrying the response may follow it.
+            assertContainsValue("`status` = 'creating'", $db->last('INSERT'), 'Checkout stores only its create intent before the POST.');
+            assertSameValue(false, strpos($db->last('INSERT'), 'inv_123'), 'Checkout cannot bind a response after losing its lock.');
+        } else {
+            assertSameValue('', $db->last('INSERT'), 'Checkout cannot bind a response after losing its lock.');
+        }
         assertSameValue('42', $db->lockOwner, 'Stale finally must not release the successor connection lock.');
     }
 }

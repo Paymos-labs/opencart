@@ -90,6 +90,14 @@ final class CallbackProcessor
             return new CallbackResult(401, 'Bad signature');
         } catch (TimestampSkewException $e) {
             return new CallbackResult(401, 'Bad timestamp');
+        } catch (EventStorageException $e) {
+            // The reservation itself could not be written: not a concurrent
+            // delivery (409) and not a payload problem (400). Nothing was reserved.
+            $previous = $e->getPrevious();
+            $this->opencart->log('Paymos webhook event could not be stored.', array(
+                'error' => $previous !== null ? $previous->getMessage() : $e->getMessage(),
+            ));
+            return new CallbackResult(500, 'Storage error');
         } catch (\InvalidArgumentException $e) {
             $this->releaseEvent();
             $this->opencart->log('Paymos OpenCart configuration error.', array('error' => $e->getMessage()));

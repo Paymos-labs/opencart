@@ -65,7 +65,13 @@ final class EventStore implements CommitAwareEventStoreInterface
                 `expires_at` = '" . (int) ($now + self::RESERVATION_SECONDS) . "',
                 `created_at` = '" . (int) $now . "'");
         } catch (\Exception $e) {
-            return false;
+            // Only a competing insert of the same event id means busy/duplicate.
+            // Any other write failure is a storage fault and must not be reported
+            // as "another delivery is processing this event" (A46-02).
+            if (self::isDuplicateKey($e)) {
+                return false;
+            }
+            throw new EventStorageException('Paymos event reservation could not be stored.', 0, $e);
         }
 
         $this->pendingEventId = $eventId;
@@ -73,6 +79,24 @@ final class EventStore implements CommitAwareEventStoreInterface
         $this->pendingTtlSeconds = (int) $ttlSeconds;
 
         return true;
+    }
+
+    /**
+     * MySQL error 1062 (ER_DUP_ENTRY). OpenCart's mysqli driver rethrows it as a
+     * plain \Exception whose message carries "Error No: 1062"; its PDO driver
+     * carries the server text "Duplicate entry"; a mysqli_sql_exception
+     * kept as the previous exception carries the code 1062.
+     */
+    private static function isDuplicateKey(\Throwable $e)
+    {
+        for ($current = $e; $current !== null; $current = $current->getPrevious()) {
+            if ((string) $current->getCode() === '1062'
+                || preg_match('/Error No:\s*1062\b|Duplicate entry/i', $current->getMessage()) === 1) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
