@@ -8,6 +8,12 @@ The public release history also lives at [paymos.io/changelog](https://paymos.io
 
 ## [Unreleased]
 
+## [1.5.9] - 2026-11-15
+
+- fix(plugins): guard PHP 8.5 setAccessible deprecations and Drupal SDK path in tests
+- fix(refunds): decouple refund RBAC from Withdraw and unify 12 CMS refund adapters
+- chore: rebuild canonical CMS package
+
 ## [1.5.8] - 2026-11-14
 
 - chore: rebuild canonical CMS package

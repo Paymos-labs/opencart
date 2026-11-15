@@ -219,13 +219,20 @@ final class RefundTestServer implements Paymos\Http\TransportInterface
     public $tamper = array();
     public $canFull = true;
     public $canOver = true;
+    public $omitSummary = false;
+    public $invoiceFailure = null;
+    public $invoiceStatus = 'paid_over';
     public function __construct(RefundTestDb $db) { $this->db = $db; }
     public function invoice(): array
     {
-        return array('invoice_id' => 'inv_123', 'project_id' => 'prj_123', 'is_test' => true, 'status' => 'paid_over',
+        $invoice = array('invoice_id' => 'inv_123', 'project_id' => 'prj_123', 'is_test' => true, 'status' => $this->invoiceStatus,
             'order' => array('external_id' => 'oc_42_0', 'amount' => '100', 'currency' => 'USD'),
-            'refund_summary' => array('can_refund_full' => $this->canFull, 'can_refund_overpayment' => $this->canOver,
-                'full_refund_amount' => '120', 'overpayment_refund_amount' => '20'));
+            'payment' => array('paid' => '120', 'currency' => 'USDT', 'network' => 'TRC20'));
+        if (!$this->omitSummary) {
+            $invoice['refund_summary'] = array('can_refund_full' => $this->canFull, 'can_refund_overpayment' => $this->canOver,
+                'full_refund_amount' => '120', 'overpayment_refund_amount' => '20');
+        }
+        return $invoice;
     }
     public function request($method, $url, array $headers, $body, $timeoutSeconds)
     {
@@ -234,6 +241,19 @@ final class RefundTestServer implements Paymos\Http\TransportInterface
         $path = parse_url($url, PHP_URL_PATH);
         $this->requests[] = array('method' => $method, 'path' => $path, 'body' => $body);
         if ($method === 'GET' && $path === '/v1/invoices/inv_123') {
+            if ($this->invoiceFailure !== null) {
+                $failure = $this->invoiceFailure;
+                $this->invoiceFailure = null;
+                if ($failure instanceof Throwable) { throw $failure; }
+                $status = (int) $failure;
+                return new HttpResponse($status, json_encode(array(
+                    'type' => 'https://api.paymos.io/errors/' . ($status === 404 ? 'not-found' : 'validation'),
+                    'title' => $status === 404 ? 'Not Found' : 'Bad Request',
+                    'status' => $status,
+                    'detail' => 'Simulated invoice read failure',
+                    'code' => $status === 404 ? 'invoice_not_found' : 'refund_denied',
+                )), array('content-type' => 'application/problem+json'));
+            }
             return new HttpResponse(200, json_encode($this->invoice()), array('Cache-Control' => 'private, no-store'));
         }
         if ($method === 'POST' && $path === '/v1/refunds') {
@@ -746,4 +766,151 @@ function test_opencart_refund_native_cron_rejects_invalid_dispatch_context_befor
     opencart_refund_throws(static function () use ($app) {
         (new \Opencart\Catalog\Controller\Extension\Paymos\Payment\Paymos($app))->refundCron(0, 'foreign', 'minute', '', '');
     }, 'cron_context_invalid');
+}
+
+function test_opencart_refund_stale_connect_disabled_does_not_block_when_contract_valid()
+{
+    $f = opencart_refund_fixture();
+    $payload = AesGcmEnvelope::open($f['settings']['payment_paymos_credentials'], 'fixture-key', 'paymos-opencart-credentials-v1');
+    $payload['environments']['sandbox']['refunds_enabled'] = false;
+    $f['settings']['payment_paymos_credentials'] = AesGcmEnvelope::seal($payload, 'fixture-key', 'paymos-opencart-credentials-v1');
+    $adapter = new RefundAdapter($f['store'], $f['invoices'], $f['native'], $f['settings'], $f['factory']);
+    $panel = $adapter->panel(42, 0);
+    assertSameValue(null, $panel['unavailable_reason'], 'Stale refunds_enabled=false must not disable panel when capability and v1 contract are present.');
+    assertTrueValue($panel['can_full'], 'Full refund remains available in panel.');
+    assertTrueValue($panel['can_overpayment'], 'Overpayment refund remains available in panel.');
+    $intent = $adapter->submit(42, 0, array('mode' => 'full', 'request_token' => 'oc-connect-disabled-01'));
+    assertSameValue('created', $intent->cashState(), 'Refund submission succeeds despite stale refunds_enabled=false.');
+}
+
+function test_opencart_refund_without_summary_exposes_nullable_amounts_and_suppresses_completed_overpayment()
+{
+    $f = opencart_refund_fixture();
+    $f['server']->omitSummary = true;
+    $panel = $f['adapter']->panel(42, 0);
+    assertSameValue(null, $panel['summary']['full_refund_amount'], 'Fallback must never report gross as full refund amount.');
+    assertSameValue(null, $panel['summary']['overpayment_refund_amount'], 'Fallback must never report gross as overpayment refund amount.');
+    assertSameValue(array('currency' => 'USDT', 'network' => 'TRC20'), $panel['summary']['refund_asset'], 'Fallback preserves payment refund_asset.');
+    assertTrueValue($panel['can_full'], 'paid_over allows full refund without refund_summary.');
+    assertTrueValue($panel['can_overpayment'], 'paid_over allows initial overpayment without refund_summary.');
+
+    $over = $f['adapter']->submit(42, 0, array('mode' => 'overpayment', 'request_token' => 'oc-nosum-overpay-001'));
+    assertSameValue('created', $over->cashState(), 'Initial overpayment proceeds without refund_summary.');
+    $f['server']->refunds[$over->withdrawalId()]['status'] = 'completed';
+    $f['adapter']->reconcile($over->operationId());
+    $postsBefore = count($f['server']->posts());
+
+    $after = $f['adapter']->panel(42, 0);
+    assertFalseValue($after['can_overpayment'], 'Completed overpayment disables a repeat overpayment button when refund_summary is omitted.');
+    assertTrueValue($after['can_full'], 'Full refund remains available after completed overpayment.');
+
+    opencart_refund_throws(static function () use ($f) {
+        $f['adapter']->submit(42, 0, array('mode' => 'overpayment', 'request_token' => 'oc-nosum-overpay-002'));
+    }, 'refund_server_action_unavailable');
+    assertSameValue($postsBefore, count($f['server']->posts()), 'Repeat overpayment is stopped before POST when refund_summary is omitted.');
+
+    $full = $f['adapter']->submit(42, 0, array('mode' => 'full', 'request_token' => 'oc-nosum-fullpay-003'));
+    assertSameValue('created', $full->cashState(), 'Full refund proceeds after completed overpayment when refund_summary is omitted.');
+}
+
+function test_opencart_refund_preflight_transient_failures_and_deterministic_errors()
+{
+    foreach (array(429, 502, new RuntimeException('read timeout')) as $idx => $failure) {
+        $f = opencart_refund_fixture();
+        $snapshotMethod = new ReflectionMethod($f['adapter'], 'nativeSnapshot');
+        if (\PHP_VERSION_ID < 80100) {
+            $snapshotMethod->setAccessible(true);
+        }
+        $draft = $f['store']->withPaymentLock('opencart:42', static function () use ($snapshotMethod, $f) {
+            return $snapshotMethod->invoke($f['adapter'], 42, 0)['draft'];
+        });
+        $token = 'oc-preflight-retry-' . $idx;
+        $probe = new Paymos\Plugin\RefundIntent(array(
+            'operation_id' => PaymosOpenCart\RefundIntentStore::uuid(),
+            'request_token' => $token,
+            'installation_id' => $f['store']->installationId(),
+            'platform' => 'opencart',
+            'native_payment_key' => 'opencart:42',
+            'invoice_id' => 'inv_123',
+            'project_id' => 'prj_123',
+            'environment' => 'sandbox',
+            'mode' => 'full',
+            'full_draft' => $draft,
+        ));
+        $f['server']->invoiceFailure = $failure;
+        $reason = $f['store']->withPaymentLock('opencart:42', static function () use ($f, $probe) {
+            return $f['adapter']->preflight($probe);
+        });
+        assertSameValue(Paymos\Plugin\NativeRefundProjectorInterface::PREFLIGHT_RETRY, $reason, 'Transient invoice failure returns PREFLIGHT_RETRY.');
+
+        $f['server']->invoiceFailure = $failure;
+        opencart_refund_throws(static function () use ($f, $token) {
+            $f['adapter']->submit(42, 0, array('mode' => 'full', 'request_token' => $token));
+        }, 'refund_preflight_unavailable');
+        assertSameValue(array(), $f['db']->tables['paymos_refund_intent'], 'submit() maps PREFLIGHT_RETRY to refund_preflight_unavailable before createIntent.');
+        assertSameValue(array(), $f['server']->posts(), 'Unavailable preflight sends no refund POST.');
+
+        $recovered = $f['adapter']->submit(42, 0, array('mode' => 'full', 'request_token' => $token));
+        assertSameValue('created', $recovered->cashState(), 'Submit succeeds after transient invoice read recovers.');
+
+        $f2 = opencart_refund_fixture();
+        $savedToken = 'oc-saved-retry-tok-' . $idx;
+        $savedProbe = new Paymos\Plugin\RefundIntent(array(
+            'operation_id' => PaymosOpenCart\RefundIntentStore::uuid(),
+            'request_token' => $savedToken,
+            'installation_id' => $f2['store']->installationId(),
+            'platform' => 'opencart',
+            'native_payment_key' => 'opencart:42',
+            'invoice_id' => 'inv_123',
+            'project_id' => 'prj_123',
+            'environment' => 'sandbox',
+            'mode' => 'full',
+            'full_draft' => $draft,
+        ));
+        $f2['store']->withPaymentLock('opencart:42', static function () use ($f2, $savedProbe) {
+            return $f2['store']->createIntent($savedProbe);
+        });
+        $f2['server']->invoiceFailure = $failure;
+        $stillPending = $f2['adapter']->submit(42, 0, array('mode' => 'full', 'request_token' => $savedToken));
+        assertSameValue('not_submitted', $stillPending->cashState(), 'Coordinator keeps NOT_SUBMITTED on PREFLIGHT_RETRY.');
+        assertSameValue(array(), $f2['server']->posts(), 'No POST while preflight returns PREFLIGHT_RETRY.');
+        $done = $f2['adapter']->submit(42, 0, array('mode' => 'full', 'request_token' => $savedToken));
+        assertSameValue('created', $done->cashState(), 'Replaying NOT_SUBMITTED intent succeeds once preflight recovers.');
+    }
+
+    foreach (array(404 => 'invoice_not_found', 400 => 'refund_denied') as $status => $expectedCode) {
+        $f = opencart_refund_fixture();
+        $snapshotMethod = new ReflectionMethod($f['adapter'], 'nativeSnapshot');
+        if (\PHP_VERSION_ID < 80100) {
+            $snapshotMethod->setAccessible(true);
+        }
+        $draft = $f['store']->withPaymentLock('opencart:42', static function () use ($snapshotMethod, $f) {
+            return $snapshotMethod->invoke($f['adapter'], 42, 0)['draft'];
+        });
+        $f['server']->invoiceFailure = $status;
+        opencart_refund_throws(static function () use ($f, $status) {
+            $f['adapter']->submit(42, 0, array('mode' => 'full', 'request_token' => 'oc-det-err-tok-' . $status));
+        }, $expectedCode);
+        assertSameValue(array(), $f['db']->tables['paymos_refund_intent'], 'Deterministic API refusal does not persist intent on submit.');
+
+        $savedToken = 'oc-det-saved-tok-' . $status;
+        $f['store']->withPaymentLock('opencart:42', static function () use ($f, $draft, $savedToken) {
+            return $f['store']->createIntent(new Paymos\Plugin\RefundIntent(array(
+                'operation_id' => PaymosOpenCart\RefundIntentStore::uuid(),
+                'request_token' => $savedToken,
+                'installation_id' => $f['store']->installationId(),
+                'platform' => 'opencart',
+                'native_payment_key' => 'opencart:42',
+                'invoice_id' => 'inv_123',
+                'project_id' => 'prj_123',
+                'environment' => 'sandbox',
+                'mode' => 'full',
+                'full_draft' => $draft,
+            )));
+        });
+        $f['server']->invoiceFailure = $status;
+        $after = $f['adapter']->submit(42, 0, array('mode' => 'full', 'request_token' => $savedToken));
+        assertSameValue('review', $after->cashState(), 'Deterministic API refusal moves saved intent to review.');
+        assertSameValue($expectedCode, $after->toArray()['review_reason'], 'Review preserves API errorCode.');
+    }
 }

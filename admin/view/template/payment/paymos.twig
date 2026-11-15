@@ -187,7 +187,7 @@
           }
         });
         document.getElementById('paymos-refund-summary').textContent =
-          (summary.full_refund_amount || '0') + ' / ' + (summary.overpayment_refund_amount || '0')
+          (summary.full_refund_amount != null ? summary.full_refund_amount : '—') + ' / ' + (summary.overpayment_refund_amount != null ? summary.overpayment_refund_amount : '—')
           + ' ' + ((summary.refund_asset || {}).currency || '') + ' ' + (summary.sender_address || '');
         buttons.forEach(function (button) {
           var mode = button.dataset.refundMode;

@@ -89,7 +89,11 @@ final class RefundAdapter implements NativeRefundProjectorInterface
             ));
             $reason = $this->preflight($intent);
             if ($reason !== null) {
-                throw new \RuntimeException($reason);
+                throw new \RuntimeException(
+                    $reason === NativeRefundProjectorInterface::PREFLIGHT_RETRY
+                        ? 'refund_preflight_unavailable'
+                        : $reason
+                );
             }
             $intent = $this->store->createIntent($intent);
             $this->coordinator($intent)->submit($intent->operationId());
@@ -109,7 +113,7 @@ final class RefundAdapter implements NativeRefundProjectorInterface
             }
             $invoice = $this->client($row['environment'])->invoices()->get($row['paymos_invoice_id']);
             $this->assertInvoice($row, $invoice);
-            $summary = isset($invoice['refund_summary']) && is_array($invoice['refund_summary']) ? $invoice['refund_summary'] : array();
+            $summary = $this->invoiceSummary($orderId, $storeId, $invoice);
             $allowed = true;
             $unavailableReason = null;
             try {
@@ -150,17 +154,55 @@ final class RefundAdapter implements NativeRefundProjectorInterface
             if ($intent->mode() === RefundStates::FULL && $intent->fullDraft() !== $snapshot['draft']) {
                 return 'refund_native_draft_changed';
             }
-            $invoice = $this->client($intent->environment())->invoices()->get($intent->invoiceId());
+            try {
+                $invoice = $this->client($intent->environment())->invoices()->get($intent->invoiceId());
+            } catch (\Paymos\Exception\ApiException $error) {
+                if ($error->statusCode() === 429 || $error->statusCode() >= 500) {
+                    return NativeRefundProjectorInterface::PREFLIGHT_RETRY;
+                }
+                return $error->errorCode() !== '' ? $error->errorCode() : $error->getMessage();
+            } catch (\RuntimeException $error) {
+                return NativeRefundProjectorInterface::PREFLIGHT_RETRY;
+            }
             $this->assertInvoice($snapshot['invoice'], $invoice);
-            $summary = isset($invoice['refund_summary']) && is_array($invoice['refund_summary']) ? $invoice['refund_summary'] : array();
+            $summary = $this->invoiceSummary($this->orderId($intent), $this->storeId(), $invoice);
             $field = $intent->mode() === RefundStates::FULL ? 'can_refund_full' : 'can_refund_overpayment';
             if (!isset($summary[$field]) || $summary[$field] !== true) {
                 return 'refund_server_action_unavailable';
             }
             return null;
-        } catch (\RuntimeException $error) {
+        } catch (\Throwable $error) {
             return $error->getMessage();
         }
+    }
+
+    private function invoiceSummary(int $orderId, int $storeId, array $invoice): array
+    {
+        if (array_key_exists('refund_summary', $invoice)) {
+            return is_array($invoice['refund_summary']) ? $invoice['refund_summary'] : array();
+        }
+        $status = isset($invoice['status']) && is_string($invoice['status']) ? $invoice['status'] : '';
+        $payment = isset($invoice['payment']) && is_array($invoice['payment']) ? $invoice['payment'] : array();
+        $completedOverpayment = false;
+        $invoiceId = isset($invoice['invoice_id']) && is_string($invoice['invoice_id']) ? $invoice['invoice_id'] : '';
+        foreach ($this->store->forPayment('opencart:' . $orderId) as $prior) {
+            if ($prior->invoiceId() === $invoiceId
+                && $prior->mode() === RefundStates::OVERPAYMENT
+                && $prior->cashState() === RefundStates::COMPLETED) {
+                $completedOverpayment = true;
+                break;
+            }
+        }
+        return array(
+            'can_refund_full' => in_array($status, array('paid', 'paid_over'), true),
+            'can_refund_overpayment' => $status === 'paid_over' && !$completedOverpayment,
+            // Gross does not establish the remaining cash after earlier refunds.
+            'full_refund_amount' => null,
+            'overpayment_refund_amount' => null,
+            'refund_asset' => isset($payment['currency'], $payment['network'])
+                ? array('currency' => $payment['currency'], 'network' => $payment['network'])
+                : null,
+        );
     }
 
     private function assertCapability(string $environment): void

@@ -175,6 +175,28 @@ async function runLocaleChecks(locale) {
   assert.equal(get('paymos-refund-unavailable').hidden, true);
   assert.equal(get('paymos-refund-unavailable').textContent, '');
   assert.equal(error.hidden, true);
+  assert.ok(get('paymos-refund-summary').textContent.startsWith('— / —'), 'Missing summary keys display placeholder instead of 0.');
+
+  await show({
+    ...available,
+    summary: {
+      full_refund_amount: null,
+      overpayment_refund_amount: null,
+      refund_asset: {currency: 'USDT', network: 'TRC20'}
+    }
+  });
+  assert.equal(get('paymos-refund-summary').textContent, '— / — USDT ');
+
+  await show({
+    ...available,
+    summary: {
+      full_refund_amount: '100',
+      overpayment_refund_amount: '0',
+      refund_asset: {currency: 'USDT', network: 'TRC20'}
+    }
+  });
+  assert.equal(get('paymos-refund-summary').textContent, '100 / 0 USDT ');
+
   assert.equal(replies.length, 0);
   process.stdout.write('PASS refund_panel_javascript_' + locale + '\n');
 }
