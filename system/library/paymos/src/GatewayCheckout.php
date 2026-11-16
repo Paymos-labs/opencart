@@ -6,6 +6,7 @@ namespace PaymosOpenCart;
 
 use Paymos\Client;
 use Paymos\Exception\NotFoundException;
+use Paymos\Plugin\InvoicePresentation;
 use Paymos\Plugin\InvoiceRenewal;
 use Paymos\Plugin\InvoiceReplacement;
 use Paymos\Plugin\InvoiceReplacementBlockedException;
@@ -238,7 +239,91 @@ final class GatewayCheckout
             $payload['client_id'] = $clientId;
         }
 
+        $products = $this->extractProducts($order);
+        if ($products !== null) {
+            $payload['products'] = $products;
+        }
+
         return $payload;
+    }
+
+    /**
+     * @param array<string, mixed> $order
+     * @return array<int, array<string, mixed>>|null
+     */
+    private function extractProducts(array $order): ?array
+    {
+        if (!isset($order['products']) || !is_array($order['products']) || count($order['products']) === 0) {
+            return null;
+        }
+
+        $candidates = array();
+        foreach ($order['products'] as $item) {
+            if (!is_array($item)) {
+                return null;
+            }
+            if (isset($item['type']) && is_string($item['type'])
+                && in_array(strtolower(trim($item['type'])), array('shipping', 'discount', 'tax', 'fee', 'coupon', 'surcharge', 'note'), true)) {
+                continue;
+            }
+
+            $title = array_key_exists('title', $item)
+                ? $item['title']
+                : (array_key_exists('name', $item) ? $item['name'] : null);
+            $rawUnitAmount = array_key_exists('unit_amount', $item)
+                ? $item['unit_amount']
+                : (array_key_exists('price', $item) ? $item['price'] : null);
+
+            $candidates[] = array(
+                'title' => is_string($title) ? $title : null,
+                'description' => isset($item['description']) && is_string($item['description']) ? $item['description'] : null,
+                'image_url' => isset($item['image_url']) && is_string($item['image_url']) ? $item['image_url'] : null,
+                'quantity' => array_key_exists('quantity', $item) ? $item['quantity'] : null,
+                'unit_amount' => self::formatUnitAmount($rawUnitAmount),
+            );
+        }
+
+        return InvoicePresentation::normalizeProducts($candidates);
+    }
+
+    /**
+     * @param mixed $raw
+     */
+    private static function formatUnitAmount($raw): ?string
+    {
+        if (is_int($raw)) {
+            return (string) $raw;
+        }
+        if (is_float($raw)) {
+            if (!is_finite($raw)) {
+                return null;
+            }
+            if ($raw < 0) {
+                return '-1';
+            }
+            $formatted = (string) $raw;
+            if (stripos($formatted, 'e') !== false) {
+                $formatted = rtrim(rtrim(sprintf('%.18F', $raw), '0'), '.');
+            }
+            return $formatted;
+        }
+        if (!is_string($raw)) {
+            return null;
+        }
+
+        $trimmed = trim($raw);
+        if ($trimmed === '') {
+            return null;
+        }
+        if (preg_match('/\A(0|[1-9][0-9]*)\.([0-9]+)\z/', $trimmed, $m) === 1) {
+            $frac = rtrim($m[2], '0');
+            if (strlen($m[2]) > 2 && strlen($frac) <= 2) {
+                $frac = str_pad($frac, 2, '0');
+                return $m[1] . '.' . $frac;
+            }
+        }
+
+        return $trimmed;
     }
 
     /**

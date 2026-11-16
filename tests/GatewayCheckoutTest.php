@@ -716,3 +716,303 @@ function test_opencart_reconciler_skips_a_pending_create_intent()
     assertSameValue(1, count($transport->requests()), 'no GET is sent for a placeholder id.');
     assertSameValue(0, count($adapter->logs), 'a pending intent is not a reconcile failure.');
 }
+
+function test_opencart_checkout_single_product_and_optional_fields_through_adapter()
+{
+    $store = new InMemoryInvoiceStore();
+    $orderModel = new class {
+        public function getOrder($orderId)
+        {
+            return opencart_order(array(
+                'total' => '43.5185',
+                'currency_code' => 'USD',
+                'currency_value' => '1.08000000',
+                'store_url' => 'https://shop.example/',
+            ));
+        }
+
+        public function getProducts($orderId)
+        {
+            return array(
+                array(
+                    'order_product_id' => 11,
+                    'product_id' => 501,
+                    'name' => "<b>Canvas</b> &amp; Blue\0",
+                    'quantity' => '2',
+                    'price' => '20.0000',
+                    'tax' => '2.6852',
+                ),
+            );
+        }
+
+        public function getOptions($orderId, $orderProductId)
+        {
+            return array(
+                array('name' => 'Size', 'value' => 'Large', 'type' => 'select'),
+            );
+        }
+
+        public function addHistory($orderId, $orderStatusId, $comment = '', $notify = false)
+        {
+        }
+    };
+    $productModel = new class {
+        public function getProduct($productId)
+        {
+            return array(
+                'product_id' => 501,
+                'description' => "<p>Museum grade</p><p>Cotton\0</p>",
+                'image' => 'catalog/canvas-blue.webp',
+            );
+        }
+    };
+    $registry = new class ($orderModel, $productModel) {
+        private $items;
+
+        public function __construct($orderModel, $productModel)
+        {
+            $config = new class {
+                public function get($key)
+                {
+                    if ($key === 'application') {
+                        return 'Catalog';
+                    }
+                    if ($key === 'config_tax') {
+                        return true;
+                    }
+                    if ($key === 'config_url') {
+                        return 'https://shop.example/';
+                    }
+                    return null;
+                }
+            };
+            $loader = new class ($this) {
+                private $registry;
+
+                public function __construct($registry)
+                {
+                    $this->registry = $registry;
+                }
+
+                public function model($route)
+                {
+                    if ($route === 'checkout/order') {
+                        $this->registry->set('model_checkout_order', $this->registry->orderModel);
+                    } elseif ($route === 'catalog/product') {
+                        $this->registry->set('model_catalog_product', $this->registry->productModel);
+                    }
+                }
+            };
+            $this->items = array(
+                'config' => $config,
+                'load' => $loader,
+                'currency' => new FakeOpenCartCurrency(),
+            );
+            $this->orderModel = $orderModel;
+            $this->productModel = $productModel;
+        }
+
+        public $orderModel;
+        public $productModel;
+
+        public function get($key)
+        {
+            return isset($this->items[$key]) ? $this->items[$key] : null;
+        }
+
+        public function set($key, $value)
+        {
+            $this->items[$key] = $value;
+        }
+    };
+
+    $adapter = new PaymosOpenCart\OpenCartAdapter($registry);
+    $transport = new MockTransport(array(opencart_created_response('inv_single')));
+    $client = new Client(new ClientConfig('pk_test_123', 'sk_test_123', 'https://api.paymos.test'), $transport);
+
+    (new GatewayCheckout($store, $adapter, static function () use ($client) {
+        return $client;
+    }))->start(42, opencart_settings());
+
+    $payload = json_decode($transport->requests()[0]['body'], true);
+    assertSameValue('47.00', $payload['amount'], 'native converted grand total must be preserved.');
+    assertSameValue(1, count($payload['products']), 'single valid product must be sent.');
+    assertSameValue('Canvas & Blue (Size: Large)', $payload['products'][0]['title'], 'title must include option and clean HTML/NUL.');
+    assertSameValue(2, $payload['products'][0]['quantity'], 'quantity must be an int.');
+    assertSameValue('24.50', $payload['products'][0]['unit_amount'], 'unit_amount must be converted into order currency including configured tax.');
+    assertSameValue("Museum grade\nCotton", $payload['products'][0]['description'], 'description must be plain text.');
+    assertSameValue('https://shop.example/image/catalog/canvas-blue.webp', $payload['products'][0]['image_url'], 'HTTPS catalog image URL must be built.');
+
+    // Optional blank description and non-HTTPS image_url must omit optional keys without failing the item.
+    $storeMin = new InMemoryInvoiceStore();
+    $fakeAdapter = new FakeOpenCartAdapter();
+    $fakeAdapter->orders[42] = opencart_order(array(
+        'total' => '47.00',
+        'products' => array(
+            array(
+                'title' => 'Canvas · Blue',
+                'description' => '<p>&nbsp;</p>',
+                'image_url' => 'http://shop.example/insecure.png',
+                'quantity' => 2,
+                'unit_amount' => '24.50',
+            ),
+        ),
+    ));
+    $transportMin = new MockTransport(array(opencart_created_response('inv_min')));
+    $clientMin = new Client(new ClientConfig('pk_test_123', 'sk_test_123', 'https://api.paymos.test'), $transportMin);
+
+    (new GatewayCheckout($storeMin, $fakeAdapter, static function () use ($clientMin) {
+        return $clientMin;
+    }))->start(42, opencart_settings());
+
+    $minPayload = json_decode($transportMin->requests()[0]['body'], true);
+    assertSameValue(array(array('title' => 'Canvas · Blue', 'quantity' => 2, 'unit_amount' => '24.50')), $minPayload['products'], 'missing/non-HTTPS optional fields must be omitted without failing item.');
+}
+
+function test_opencart_checkout_cart_products_and_all_or_nothing_fallback()
+{
+    $store = new InMemoryInvoiceStore();
+    $adapter = new FakeOpenCartAdapter();
+    $adapter->orders[42] = opencart_order(array(
+        'total' => '42.50',
+        'products' => array(
+            array(
+                'title' => 'Canvas · Blue',
+                'description' => '<p>Giclée print</p>',
+                'image_url' => 'https://shop.example/canvas.webp',
+                'quantity' => 2,
+                'unit_amount' => '15.00',
+            ),
+            array('type' => 'shipping', 'title' => 'Express Shipping', 'quantity' => 1, 'unit_amount' => '5.00'),
+            array('type' => 'discount', 'title' => 'VIP Coupon', 'quantity' => 1, 'unit_amount' => '-5.00'),
+            array(
+                'title' => 'Notebook',
+                'description' => '   ',
+                'image_url' => null,
+                'quantity' => '1',
+                'unit_amount' => '12.50',
+            ),
+        ),
+    ));
+    $transport = new MockTransport(array(opencart_created_response('inv_cart')));
+    $client = new Client(new ClientConfig('pk_test_123', 'sk_test_123', 'https://api.paymos.test'), $transport);
+
+    (new GatewayCheckout($store, $adapter, static function () use ($client) {
+        return $client;
+    }))->start(42, opencart_settings());
+
+    $payload = json_decode($transport->requests()[0]['body'], true);
+    assertSameValue('42.50', $payload['amount'], 'cart grand total must remain native total.');
+    assertSameValue(
+        array(
+            array(
+                'title' => 'Canvas · Blue',
+                'quantity' => 2,
+                'unit_amount' => '15.00',
+                'description' => 'Giclée print',
+                'image_url' => 'https://shop.example/canvas.webp',
+            ),
+            array(
+                'title' => 'Notebook',
+                'quantity' => 1,
+                'unit_amount' => '12.50',
+            ),
+        ),
+        $payload['products'],
+        'cart payload must include all valid product lines and exclude shipping/discount lines.'
+    );
+
+    // Exactly 50 items succeed; 51 items and fractional quantity fall back all-or-nothing to amount-only.
+    $fifty = array();
+    for ($i = 1; $i <= 50; $i++) {
+        $fifty[] = array('title' => 'Item ' . $i, 'quantity' => 1, 'unit_amount' => '1.00');
+    }
+    $fiftyOne = $fifty;
+    $fiftyOne[] = array('title' => 'Item 51', 'quantity' => 1, 'unit_amount' => '1.00');
+
+    $invalidCases = array(
+        'fractional_qty' => array(
+            array('title' => 'Valid', 'quantity' => 1, 'unit_amount' => '20.00'),
+            array('title' => 'Fabric', 'quantity' => 1.5, 'unit_amount' => '10.00'),
+        ),
+        'blank_title' => array(
+            array('title' => 'Valid', 'quantity' => 1, 'unit_amount' => '20.00'),
+            array('title' => "<b>&nbsp;</b>\0", 'quantity' => 1, 'unit_amount' => '5.00'),
+        ),
+        'negative_price' => array(
+            array('title' => 'Valid', 'quantity' => 1, 'unit_amount' => '20.00'),
+            array('title' => 'Broken', 'quantity' => 1, 'unit_amount' => '-5.00'),
+        ),
+        'over_50' => $fiftyOne,
+    );
+
+    foreach ($invalidCases as $label => $items) {
+        $caseStore = new InMemoryInvoiceStore();
+        $caseAdapter = new FakeOpenCartAdapter();
+        $caseAdapter->orders[42] = opencart_order(array('total' => '42.50', 'products' => $items));
+        $caseTransport = new MockTransport(array(opencart_created_response('inv_' . $label)));
+        $caseClient = new Client(new ClientConfig('pk_test_123', 'sk_test_123', 'https://api.paymos.test'), $caseTransport);
+
+        (new GatewayCheckout($caseStore, $caseAdapter, static function () use ($caseClient) {
+            return $caseClient;
+        }))->start(42, opencart_settings());
+
+        $casePayload = json_decode($caseTransport->requests()[0]['body'], true);
+        assertSameValue('42.50', $casePayload['amount'], $label . ': grand total must be preserved on fallback.');
+        assertFalseValue(array_key_exists('products', $casePayload), $label . ': invalid cart must revert to amount-only.');
+    }
+
+    $maxStore = new InMemoryInvoiceStore();
+    $maxAdapter = new FakeOpenCartAdapter();
+    $maxAdapter->orders[42] = opencart_order(array('total' => '50.00', 'products' => $fifty));
+    $maxTransport = new MockTransport(array(opencart_created_response('inv_50')));
+    $maxClient = new Client(new ClientConfig('pk_test_123', 'sk_test_123', 'https://api.paymos.test'), $maxTransport);
+    (new GatewayCheckout($maxStore, $maxAdapter, static function () use ($maxClient) {
+        return $maxClient;
+    }))->start(42, opencart_settings());
+    $maxPayload = json_decode($maxTransport->requests()[0]['body'], true);
+    assertSameValue(50, count($maxPayload['products']), 'exactly 50 items must be sent.');
+}
+
+function test_opencart_checkout_retry_and_metadata_change_preserve_money_guards()
+{
+    $store = new InMemoryInvoiceStore();
+    $adapter = new FakeOpenCartAdapter();
+    $adapter->orders[42] = opencart_order(array(
+        'total' => '100.00',
+        'products' => array(
+            array('title' => 'Original Product', 'quantity' => 1, 'unit_amount' => '100.00'),
+        ),
+    ));
+    $transport = new MockTransport(array(
+        opencart_created_response('inv_existing'),
+        opencart_live_invoice_response('inv_existing', 'awaiting_client', time() + 600),
+        opencart_live_invoice_response('inv_existing', 'cancelled', time() + 600),
+        opencart_created_response('inv_new'),
+    ));
+    $client = new Client(new ClientConfig('pk_test_123', 'sk_test_123', 'https://api.paymos.test'), $transport);
+    $factory = static function () use ($client) { return $client; };
+
+    (new GatewayCheckout($store, $adapter, $factory))->start(42, opencart_settings());
+
+    // Changing only presentation metadata with matching amount/currency reuses existing invoice.
+    $adapter->orders[42]['products'] = array(
+        array('title' => 'Edited Product Title', 'quantity' => 2, 'unit_amount' => '50.00'),
+    );
+    $reused = (new GatewayCheckout($store, $adapter, $factory))->start(42, opencart_settings());
+    assertSameValue('1', $reused['reused'], 'product metadata change alone must reuse matching financial snapshot.');
+    assertSameValue('https://checkout.paymos.test/inv_existing', $reused['payment_url'], 'reused URL must stay unchanged.');
+
+    // Changing order amount replaces old invoice and carries updated products under bumped key.
+    $adapter->orders[42]['total'] = '120.00';
+    $adapter->orders[42]['products'] = array(
+        array('title' => 'Updated Product', 'quantity' => 2, 'unit_amount' => '60.00'),
+    );
+    $replaced = (new GatewayCheckout($store, $adapter, $factory))->start(42, opencart_settings());
+    assertSameValue('0', $replaced['reused'], 'amount change must issue a new invoice.');
+    $requests = $transport->requests();
+    assertSameValue(array('POST', 'GET', 'POST', 'POST'), array_column($requests, 'method'), 'create, reuse check, cancel, new create.');
+    $newPayload = json_decode($requests[3]['body'], true);
+    assertSameValue('oc_42_1', $newPayload['external_order_id'], 'bumped external order id must be used.');
+    assertSameValue('Updated Product', $newPayload['products'][0]['title'], 'replaced invoice must carry current products.');
+}

@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace PaymosOpenCart;
 
+use Paymos\Plugin\InvoicePresentation;
+
 final class OpenCartAdapter implements OpenCartAdapterInterface
 {
     /** @var object */
@@ -47,7 +49,275 @@ final class OpenCartAdapter implements OpenCartAdapterInterface
         }
 
         $order = $model->getOrder((int) $orderId);
-        return is_array($order) ? $order : array();
+        if (!is_array($order) || count($order) === 0) {
+            return array();
+        }
+
+        if (!$this->isAdmin() && $this->answersTo($model, 'getProducts')) {
+            $products = $this->orderProducts((int) $orderId, $model, $order);
+            if (count($products) > 0) {
+                $order['products'] = $products;
+            }
+        }
+
+        return $order;
+    }
+
+    /**
+     * Extract storefront order line items for `products[]` normalization without
+     * breaking admin/reconcile stubs that only implement getOrder().
+     *
+     * @param object               $orderModel
+     * @param array<string, mixed> $order
+     * @return array<int, mixed>
+     */
+    private function orderProducts(int $orderId, $orderModel, array $order): array
+    {
+        $rows = $orderModel->getProducts($orderId);
+        if (!is_array($rows) || count($rows) === 0) {
+            return array();
+        }
+
+        if (count($rows) > InvoicePresentation::MAX_ITEMS) {
+            return array_fill(0, count($rows), array(
+                'title' => 'Item',
+                'quantity' => 1,
+                'unit_amount' => '1.00',
+            ));
+        }
+
+        $currency = $this->registry->get('currency');
+        $currencyCode = isset($order['currency_code']) && is_scalar($order['currency_code'])
+            ? strtoupper(trim((string) $order['currency_code']))
+            : '';
+        $currencyRate = isset($order['currency_value']) && is_numeric($order['currency_value'])
+            ? (float) $order['currency_value']
+            : 0.0;
+        $canConvert = $currencyCode !== ''
+            && is_object($currency)
+            && is_callable(array($currency, 'format'))
+            && (!is_callable(array($currency, 'has')) || $currency->has($currencyCode));
+        $decimals = $canConvert && is_callable(array($currency, 'getDecimalPlace'))
+            ? max(0, (int) $currency->getDecimalPlace($currencyCode))
+            : 2;
+
+        $config = $this->registry->get('config');
+        $includeTax = $this->answersTo($config, 'get') && (bool) $config->get('config_tax');
+        $storeUrl = $this->storeBaseUrl($order, $config);
+        $productModel = $this->loadCatalogProductModel();
+        $productCache = array();
+
+        $products = array();
+        foreach ($rows as $row) {
+            if (!is_array($row)) {
+                $products[] = $row;
+                continue;
+            }
+
+            $productId = isset($row['product_id']) && is_numeric($row['product_id']) ? (int) $row['product_id'] : 0;
+            $details = $this->catalogProductDetails($productModel, $productId, $productCache);
+
+            $description = isset($details['description']) && is_string($details['description'])
+                ? $details['description']
+                : null;
+            $rawImage = isset($details['image']) && is_string($details['image']) && trim($details['image']) !== ''
+                ? trim($details['image'])
+                : (isset($row['image']) && is_string($row['image']) && trim($row['image']) !== ''
+                    ? trim($row['image'])
+                    : null);
+
+            $products[] = array(
+                'title' => $this->orderProductTitle($orderId, $orderModel, $row),
+                'description' => $description,
+                'image_url' => $this->resolveImageUrl($rawImage, $storeUrl),
+                'quantity' => array_key_exists('quantity', $row) ? $row['quantity'] : null,
+                'unit_amount' => $this->orderProductUnitAmount(
+                    $row,
+                    $canConvert,
+                    $currency,
+                    $currencyCode,
+                    $currencyRate,
+                    $decimals,
+                    $includeTax
+                ),
+            );
+        }
+
+        return $products;
+    }
+
+    /**
+     * @param object               $orderModel
+     * @param array<string, mixed> $row
+     */
+    private function orderProductTitle(int $orderId, $orderModel, array $row): ?string
+    {
+        if (!isset($row['name']) || !is_string($row['name'])) {
+            return null;
+        }
+
+        $title = $row['name'];
+        if (!$this->answersTo($orderModel, 'getOptions')
+            || !isset($row['order_product_id'])
+            || !is_numeric($row['order_product_id'])) {
+            return $title;
+        }
+
+        $options = $orderModel->getOptions($orderId, (int) $row['order_product_id']);
+        if (!is_array($options) || count($options) === 0) {
+            return $title;
+        }
+
+        $parts = array();
+        foreach ($options as $option) {
+            if (!is_array($option)) {
+                continue;
+            }
+            $type = isset($option['type']) && is_scalar($option['type']) ? strtolower(trim((string) $option['type'])) : '';
+            if ($type === 'file') {
+                continue;
+            }
+            $optionValue = isset($option['value']) && is_scalar($option['value']) ? trim((string) $option['value']) : '';
+            if ($optionValue === '') {
+                continue;
+            }
+            $optionName = isset($option['name']) && is_scalar($option['name']) ? trim((string) $option['name']) : '';
+            $parts[] = $optionName !== '' ? ($optionName . ': ' . $optionValue) : $optionValue;
+        }
+
+        if (count($parts) === 0) {
+            return $title;
+        }
+
+        $withOptions = $title . ' (' . implode(', ', $parts) . ')';
+        $chars = preg_split('//u', $withOptions, 201, PREG_SPLIT_NO_EMPTY);
+        if (is_array($chars) && count($chars) <= 200) {
+            return $withOptions;
+        }
+
+        return $title;
+    }
+
+    /**
+     * @param array<string, mixed> $row
+     * @param object|null          $currency
+     */
+    private function orderProductUnitAmount(
+        array $row,
+        bool $canConvert,
+        $currency,
+        string $currencyCode,
+        float $currencyRate,
+        int $decimals,
+        bool $includeTax
+    ): ?string {
+        if (!array_key_exists('price', $row)
+            || (!is_string($row['price']) && !is_int($row['price']) && !is_float($row['price']))) {
+            return null;
+        }
+
+        $rawPrice = is_string($row['price']) ? trim($row['price']) : (string) $row['price'];
+        if ($rawPrice === '' || !is_numeric($rawPrice)) {
+            return null;
+        }
+        if ((float) $rawPrice < 0) {
+            return $rawPrice;
+        }
+        if (!$canConvert || !is_object($currency)) {
+            return null;
+        }
+
+        $baseUnit = (float) $rawPrice;
+        if ($includeTax && isset($row['tax']) && is_numeric($row['tax'])) {
+            $baseUnit += (float) $row['tax'];
+        }
+        if ($baseUnit < 0) {
+            return '-1';
+        }
+
+        $converted = $currency->format($baseUnit, $currencyCode, $currencyRate, false);
+        if (!is_numeric($converted)) {
+            return null;
+        }
+
+        return number_format((float) $converted, $decimals, '.', '');
+    }
+
+    /**
+     * @return object|null
+     */
+    private function loadCatalogProductModel()
+    {
+        $loader = $this->registry->get('load');
+        if (!is_object($loader) || !method_exists($loader, 'model')) {
+            return null;
+        }
+
+        try {
+            $loader->model('catalog/product');
+            $model = $this->registry->get('model_catalog_product');
+            return $this->answersTo($model, 'getProduct') ? $model : null;
+        } catch (\Throwable $e) {
+            return null;
+        }
+    }
+
+    /**
+     * @param object|null                    $productModel
+     * @param array<int, array<string,mixed>> $cache
+     * @return array<string, mixed>
+     */
+    private function catalogProductDetails($productModel, int $productId, array &$cache): array
+    {
+        if ($productModel === null || $productId <= 0) {
+            return array();
+        }
+        if (array_key_exists($productId, $cache)) {
+            return $cache[$productId];
+        }
+
+        try {
+            $info = $productModel->getProduct($productId);
+            $cache[$productId] = is_array($info) ? $info : array();
+        } catch (\Throwable $e) {
+            $cache[$productId] = array();
+        }
+
+        return $cache[$productId];
+    }
+
+    /**
+     * @param array<string, mixed> $order
+     * @param object|null          $config
+     */
+    private function storeBaseUrl(array $order, $config): string
+    {
+        if (isset($order['store_url']) && is_string($order['store_url']) && trim($order['store_url']) !== '') {
+            return trim($order['store_url']);
+        }
+        if ($this->answersTo($config, 'get')) {
+            $configUrl = $config->get('config_url');
+            if (is_string($configUrl) && trim($configUrl) !== '') {
+                return trim($configUrl);
+            }
+        }
+
+        return '';
+    }
+
+    private function resolveImageUrl(?string $rawImage, string $storeUrl): ?string
+    {
+        if ($rawImage === null || $rawImage === '') {
+            return null;
+        }
+        if (preg_match('#\Ahttps?://#i', $rawImage) === 1) {
+            return $rawImage;
+        }
+        if ($storeUrl === '') {
+            return null;
+        }
+
+        return rtrim($storeUrl, '/') . '/image/' . ltrim($rawImage, '/');
     }
 
     public function addOrderHistory($orderId, $orderStatusId, $comment, $notify = false)
