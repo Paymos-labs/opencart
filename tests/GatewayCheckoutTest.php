@@ -762,7 +762,6 @@ function test_opencart_checkout_single_product_and_optional_fields_through_adapt
             return array(
                 'product_id' => 501,
                 'description' => "<p>Museum grade</p><p>Cotton\0</p>",
-                'image' => 'catalog/canvas-blue.webp',
             );
         }
     };
@@ -841,9 +840,9 @@ function test_opencart_checkout_single_product_and_optional_fields_through_adapt
     assertSameValue(2, $payload['products'][0]['quantity'], 'quantity must be an int.');
     assertSameValue('24.50', $payload['products'][0]['unit_amount'], 'unit_amount must be converted into order currency including configured tax.');
     assertSameValue("Museum grade\nCotton", $payload['products'][0]['description'], 'description must be plain text.');
-    assertSameValue('https://shop.example/image/catalog/canvas-blue.webp', $payload['products'][0]['image_url'], 'HTTPS catalog image URL must be built.');
+    assertFalseValue(array_key_exists('image_url', $payload['products'][0]), 'Product payload must omit the removed image field.');
 
-    // Optional blank description and non-HTTPS image_url must omit optional keys without failing the item.
+    // Optional blank description must omit optional keys without failing the item.
     $storeMin = new InMemoryInvoiceStore();
     $fakeAdapter = new FakeOpenCartAdapter();
     $fakeAdapter->orders[42] = opencart_order(array(
@@ -852,7 +851,6 @@ function test_opencart_checkout_single_product_and_optional_fields_through_adapt
             array(
                 'title' => 'Canvas · Blue',
                 'description' => '<p>&nbsp;</p>',
-                'image_url' => 'http://shop.example/insecure.png',
                 'quantity' => 2,
                 'unit_amount' => '24.50',
             ),
@@ -866,7 +864,7 @@ function test_opencart_checkout_single_product_and_optional_fields_through_adapt
     }))->start(42, opencart_settings());
 
     $minPayload = json_decode($transportMin->requests()[0]['body'], true);
-    assertSameValue(array(array('title' => 'Canvas · Blue', 'quantity' => 2, 'unit_amount' => '24.50')), $minPayload['products'], 'missing/non-HTTPS optional fields must be omitted without failing item.');
+    assertSameValue(array(array('title' => 'Canvas · Blue', 'quantity' => 2, 'unit_amount' => '24.50')), $minPayload['products'], 'Missing descriptions must be omitted without failing item.');
 }
 
 function test_opencart_checkout_cart_products_and_all_or_nothing_fallback()
@@ -879,7 +877,6 @@ function test_opencart_checkout_cart_products_and_all_or_nothing_fallback()
             array(
                 'title' => 'Canvas · Blue',
                 'description' => '<p>Giclée print</p>',
-                'image_url' => 'https://shop.example/canvas.webp',
                 'quantity' => 2,
                 'unit_amount' => '15.00',
             ),
@@ -888,7 +885,6 @@ function test_opencart_checkout_cart_products_and_all_or_nothing_fallback()
             array(
                 'title' => 'Notebook',
                 'description' => '   ',
-                'image_url' => null,
                 'quantity' => '1',
                 'unit_amount' => '12.50',
             ),
@@ -910,7 +906,6 @@ function test_opencart_checkout_cart_products_and_all_or_nothing_fallback()
                 'quantity' => 2,
                 'unit_amount' => '15.00',
                 'description' => 'Giclée print',
-                'image_url' => 'https://shop.example/canvas.webp',
             ),
             array(
                 'title' => 'Notebook',

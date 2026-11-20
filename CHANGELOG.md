@@ -8,6 +8,12 @@ The public release history also lives at [paymos.io/changelog](https://paymos.io
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-11-20
+
+- refactor(checkout): remove product images from invoice products
+- chore: bundle Paymos PHP SDK v1.11.1
+- chore: rebuild canonical CMS package
+
 ## [1.6.0] - 2026-11-16
 
 - feat(plugins): add products[] to OpenCart, PrestaShop, WHMCS, and CS-Cart (9.2)

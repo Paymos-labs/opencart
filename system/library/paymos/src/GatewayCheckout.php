@@ -277,7 +277,6 @@ final class GatewayCheckout
             $candidates[] = array(
                 'title' => is_string($title) ? $title : null,
                 'description' => isset($item['description']) && is_string($item['description']) ? $item['description'] : null,
-                'image_url' => isset($item['image_url']) && is_string($item['image_url']) ? $item['image_url'] : null,
                 'quantity' => array_key_exists('quantity', $item) ? $item['quantity'] : null,
                 'unit_amount' => self::formatUnitAmount($rawUnitAmount),
             );

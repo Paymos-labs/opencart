@@ -103,7 +103,6 @@ final class OpenCartAdapter implements OpenCartAdapterInterface
 
         $config = $this->registry->get('config');
         $includeTax = $this->answersTo($config, 'get') && (bool) $config->get('config_tax');
-        $storeUrl = $this->storeBaseUrl($order, $config);
         $productModel = $this->loadCatalogProductModel();
         $productCache = array();
 
@@ -120,16 +119,9 @@ final class OpenCartAdapter implements OpenCartAdapterInterface
             $description = isset($details['description']) && is_string($details['description'])
                 ? $details['description']
                 : null;
-            $rawImage = isset($details['image']) && is_string($details['image']) && trim($details['image']) !== ''
-                ? trim($details['image'])
-                : (isset($row['image']) && is_string($row['image']) && trim($row['image']) !== ''
-                    ? trim($row['image'])
-                    : null);
-
             $products[] = array(
                 'title' => $this->orderProductTitle($orderId, $orderModel, $row),
                 'description' => $description,
-                'image_url' => $this->resolveImageUrl($rawImage, $storeUrl),
                 'quantity' => array_key_exists('quantity', $row) ? $row['quantity'] : null,
                 'unit_amount' => $this->orderProductUnitAmount(
                     $row,
@@ -284,40 +276,6 @@ final class OpenCartAdapter implements OpenCartAdapterInterface
         }
 
         return $cache[$productId];
-    }
-
-    /**
-     * @param array<string, mixed> $order
-     * @param object|null          $config
-     */
-    private function storeBaseUrl(array $order, $config): string
-    {
-        if (isset($order['store_url']) && is_string($order['store_url']) && trim($order['store_url']) !== '') {
-            return trim($order['store_url']);
-        }
-        if ($this->answersTo($config, 'get')) {
-            $configUrl = $config->get('config_url');
-            if (is_string($configUrl) && trim($configUrl) !== '') {
-                return trim($configUrl);
-            }
-        }
-
-        return '';
-    }
-
-    private function resolveImageUrl(?string $rawImage, string $storeUrl): ?string
-    {
-        if ($rawImage === null || $rawImage === '') {
-            return null;
-        }
-        if (preg_match('#\Ahttps?://#i', $rawImage) === 1) {
-            return $rawImage;
-        }
-        if ($storeUrl === '') {
-            return null;
-        }
-
-        return rtrim($storeUrl, '/') . '/image/' . ltrim($rawImage, '/');
     }
 
     public function addOrderHistory($orderId, $orderStatusId, $comment, $notify = false)
