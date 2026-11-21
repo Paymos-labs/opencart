@@ -8,6 +8,10 @@ The public release history also lives at [paymos.io/changelog](https://paymos.io
 
 ## [Unreleased]
 
+## [1.6.3] - 2026-11-21
+
+- chore: rebuild canonical CMS package
+
 ## [1.6.2] - 2026-11-20
 
 - chore: rebuild canonical CMS package
