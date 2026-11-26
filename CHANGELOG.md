@@ -8,6 +8,11 @@ The public release history also lives at [paymos.io/changelog](https://paymos.io
 
 ## [Unreleased]
 
+## [1.6.7] - 2026-11-26
+
+- docs(plugins): add 6-language READMEs (EN/zh-CN/ru/es/de/tr) and YouTube walkthrough previews across all 25 Paymos-labs repos
+- chore: bundle Paymos PHP SDK v1.13.0
+
 ## [1.6.6] - 2026-11-25
 
 - chore: rebuild canonical CMS package

@@ -1,5 +1,7 @@
 # Paymos for OpenCart
 
+**English** | [简体中文](README.zh-CN.md) | [Русский](README.ru.md) | [Español](README.es.md) | [Deutsch](README.de.md) | [Türkçe](README.tr.md)
+
 Official Paymos payment extension for OpenCart 4.0.2.0 and later. The shopper confirms the order,
 lands on the hosted Paymos checkout, and pays in whichever token and network your
 project enables — Tron, Ethereum, BSC, Solana and the rest of the supported set.
@@ -11,6 +13,10 @@ The part worth knowing before anything else: you decide which of *your* order
 statuses each payment state writes. The extension ships defaults, but the five
 mappings are dropdowns filled from your own status list, so Paymos fits the
 workflow the store already runs instead of imposing one.
+
+[![Watch: 12 Official CMS Crypto Plugins — 1-Click Connect (Paymos)](https://i.ytimg.com/vi/VMLUGVumYkg/maxresdefault.jpg)](https://www.youtube.com/watch?v=VMLUGVumYkg)
+
+> **Video walkthrough (1:12, subtitles in 6 languages):** [Watch on YouTube](https://www.youtube.com/watch?v=VMLUGVumYkg)
 
 ## Requirements
 
