@@ -969,6 +969,66 @@ function test_opencart_checkout_cart_products_and_all_or_nothing_fallback()
     assertSameValue(50, count($maxPayload['products']), 'exactly 50 items must be sent.');
 }
 
+/**
+ * CMSP-01/CMSP-50: OpenCart stores product names and descriptions HTML-escaped
+ * (Request::clean()). The escaped markup must reach the invoice as plain text,
+ * and plain `<`/`>` the merchant typed must survive.
+ */
+function opencart_escaped_product_order()
+{
+    return opencart_order(array(
+        'products' => array(
+            array(
+                'title' => 'USB-C -&gt; HDMI &amp; Co',
+                'description' => '&lt;p&gt;Intel &amp;lt;5W&lt;/p&gt;&lt;p&gt;Ages 3+ &amp;gt; fun&lt;/p&gt;',
+                'quantity' => 1,
+                'unit_amount' => '100.00',
+            ),
+        ),
+    ));
+}
+
+function test_opencart_checkout_sends_html_escaped_product_text_as_plain_text()
+{
+    $store = new InMemoryInvoiceStore();
+    $adapter = new FakeOpenCartAdapter();
+    $adapter->orders[42] = opencart_escaped_product_order();
+    $transport = new MockTransport(array(opencart_created_response('inv_escaped')));
+    $client = new Client(new ClientConfig('pk_test_123', 'sk_test_123', 'https://api.paymos.test'), $transport);
+
+    (new GatewayCheckout($store, $adapter, static function () use ($client) {
+        return $client;
+    }))->start(42, opencart_settings());
+
+    $payload = json_decode($transport->requests()[0]['body'], true);
+    assertSameValue('USB-C -> HDMI & Co', $payload['products'][0]['title'], 'the stored escaping is undone and plain > stays.');
+    assertSameValue("Intel <5W\nAges 3+ > fun", $payload['products'][0]['description'], 'escaped markup becomes plain text without losing plain < and >.');
+}
+
+function test_opencart_replayed_create_keeps_the_products()
+{
+    $store = new InMemoryInvoiceStore();
+    $adapter = new FakeOpenCartAdapter();
+    $adapter->orders[42] = opencart_escaped_product_order();
+    $transport = new OpenCartScriptedTransport(array(
+        new \RuntimeException('timeout after the request was sent'),
+        opencart_created_response('inv_lost'),
+        opencart_live_invoice_response('inv_lost', 'awaiting_client', time() + 600),
+    ));
+    $client = new Client(new ClientConfig('pk_test_123', 'sk_test_123', 'https://api.paymos.test'), $transport);
+    $factory = static function () use ($client) { return $client; };
+
+    opencart_start_expecting_failure(new GatewayCheckout($store, $adapter, $factory));
+    (new GatewayCheckout($store, $adapter, $factory))->start(42, opencart_settings());
+
+    $requests = $transport->requests();
+    $original = json_decode($requests[0]['body'], true);
+    $replay = json_decode($requests[1]['body'], true);
+    assertSameValue(1, count($original['products']), 'the first create carries the product.');
+    assertSameValue($original['products'], isset($replay['products']) ? $replay['products'] : null, 'the replay of the unfinished create carries the same products.');
+    assertSameValue($original['external_order_id'], $replay['external_order_id'], 'the replay keeps the key.');
+}
+
 function test_opencart_checkout_retry_and_metadata_change_preserve_money_guards()
 {
     $store = new InMemoryInvoiceStore();

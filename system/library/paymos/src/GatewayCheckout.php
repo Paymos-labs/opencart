@@ -168,6 +168,10 @@ final class GatewayCheckout
         if ($clientId !== '') {
             $payload['client_id'] = $clientId;
         }
+        $products = $this->extractProducts($order);
+        if ($products !== null) {
+            $payload['products'] = $products;
+        }
 
         $response = $this->client($config, (string) $intent['environment'])->invoices()->create($payload);
 
@@ -275,14 +279,42 @@ final class GatewayCheckout
                 : (array_key_exists('price', $item) ? $item['price'] : null);
 
             $candidates[] = array(
-                'title' => is_string($title) ? $title : null,
-                'description' => isset($item['description']) && is_string($item['description']) ? $item['description'] : null,
+                'title' => self::plainText($title),
+                'description' => self::plainText(isset($item['description']) ? $item['description'] : null),
                 'quantity' => array_key_exists('quantity', $item) ? $item['quantity'] : null,
                 'unit_amount' => self::formatUnitAmount($rawUnitAmount),
             );
         }
 
         return InvoicePresentation::normalizeProducts($candidates);
+    }
+
+    /**
+     * OpenCart stores product names and descriptions HTML-escaped (Request::clean()
+     * runs htmlspecialchars) and its storefront decodes them before rendering. Passed
+     * as is, `&lt;p&gt;Intel&lt;/p&gt;` left the SDK as `<p>Intel</p>`, which the
+     * server refuses as markup (CMSP-01). Undo the storage escaping, drop tags (only
+     * a `<` that opens one, so `5 < 10` and `->` stay), decode the HTML entities, and
+     * give the SDK the plain text HTML-escaped, so its own tag strip and entity
+     * decode return exactly that text.
+     *
+     * @param mixed $value
+     */
+    private static function plainText($value): ?string
+    {
+        if (!is_string($value)) {
+            return null;
+        }
+
+        $html = html_entity_decode($value, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $html = preg_replace('/<(script|style)\b[^>]*>.*?<\/\1\s*>/isu', '', $html);
+        $html = is_string($html) ? preg_replace('/<br\s*\/?>|<\/(?:p|div|li)>/iu', "\n", $html) : null;
+        $text = is_string($html) ? preg_replace('/<!--.*?-->|<\/?[a-z][^>]*>|<![^>]*>|<\?.*?\?>/isu', '', $html) : null;
+        if (!is_string($text)) {
+            return null;
+        }
+
+        return htmlspecialchars(html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8'), ENT_NOQUOTES, 'UTF-8');
     }
 
     /**

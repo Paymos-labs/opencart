@@ -8,6 +8,13 @@ The public release history also lives at [paymos.io/changelog](https://paymos.io
 
 ## [Unreleased]
 
+## [1.6.10] - 2026-11-28
+
+- fix(opencart): send escaped product text as plain text, keep items on replay
+
+### Fixed
+- **Escaped product text refused at checkout (`GatewayCheckout`):** OpenCart stores product names and descriptions HTML-escaped, so a description from the editor reached Paymos as `<p>…</p>` and the invoice create was refused; the next checkout then sent the invoice without its items. Names and descriptions are now turned into plain text first (plain `<` and `>` the merchant typed are kept), and the retry of an unfinished invoice create sends the same items.
+
 ## [1.6.9] - 2026-11-28
 
 - fix(opencart): re-read an accepted refund after a temporary read failure
