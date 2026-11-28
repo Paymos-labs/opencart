@@ -221,6 +221,8 @@ final class RefundTestServer implements Paymos\Http\TransportInterface
     public $canOver = true;
     public $omitSummary = false;
     public $invoiceFailure = null;
+    /** Statuses the next refund reads answer with (temporary 401/403/404 after an accepted POST). */
+    public $refundReadFailures = array();
     public $invoiceStatus = 'paid_over';
     public function __construct(RefundTestDb $db) { $this->db = $db; }
     public function invoice(): array
@@ -286,6 +288,12 @@ final class RefundTestServer implements Paymos\Http\TransportInterface
             return new HttpResponse(201, json_encode(array('withdrawal_id' => $id)), array());
         }
         if ($method === 'GET' && preg_match('!^/v1/refunds/(wd_[0-9]+)$!', $path, $match)) {
+            if ($this->refundReadFailures) {
+                $status = (int) array_shift($this->refundReadFailures);
+                return new HttpResponse($status, json_encode(array('type' => 'https://api.paymos.io/errors/unavailable', 'title' => 'Unavailable',
+                    'status' => $status, 'detail' => 'Simulated temporary refund read failure', 'code' => 'refund_not_found')),
+                    array('content-type' => 'application/problem+json'));
+            }
             return new HttpResponse(200, json_encode(array_replace($this->refunds[$match[1]], $this->tamper)), array('Cache-Control' => 'private, no-store'));
         }
         throw new RuntimeException('Unexpected fixture HTTP ' . $method . ' ' . $path);
@@ -339,6 +347,31 @@ function opencart_refund_throws(callable $action, string $message): void
         return;
     }
     throw new RuntimeException('Expected failure: ' . $message);
+}
+
+/**
+ * BUG-1347 (feature-audit 3.11): the server accepted the refund POST, but the
+ * reverse read right after it answered a temporary 401/403/404. The next
+ * reconcile reads again and the completed refund is projected.
+ */
+function test_opencart_refund_accepted_refund_survives_a_temporary_reverse_read_failure()
+{
+    foreach (array(401, 403, 404) as $status) {
+        $f = opencart_refund_fixture();
+        $f['server']->refundReadFailures = array($status);
+        $intent = opencart_refund_submit($f, 'full', 'read-retry-token-' . $status);
+        assertSameValue(1, count($f['server']->posts()), $status . ': the refund was accepted once.');
+
+        $f['server']->refunds['wd_1']['status'] = 'completed';
+        opencart_refund_reconcile($f, $intent);
+
+        $after = $f['store']->getIntent($intent->operationId());
+        assertSameValue('wd_1', $after->withdrawalId(), $status . ': the accepted refund is bound after the read recovers.');
+        assertSameValue('completed', $after->cashState(), $status . ': the cash refund is completed.');
+        assertSameValue('applied', $after->projectionState(), $status . ': the refund is projected into OpenCart.');
+        assertSameValue(1, count($f['db']->tables['order_history']), $status . ': one native refund record.');
+        assertSameValue(1, count($f['server']->posts()), $status . ': no second refund is sent.');
+    }
 }
 
 function test_opencart_refund_full_waits_for_verified_get_and_keeps_native_status_stock_and_mail()

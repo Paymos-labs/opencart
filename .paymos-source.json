@@ -1,6 +1,6 @@
 {
   "source_repository": "Paymos-labs/paymos",
   "source_path": "plugins/opencart-paymos",
-  "source_commit": "a1195c49b11a9f1c6a632122606b84f0333283bf",
-  "version": "1.6.8"
+  "source_commit": "5ec09d32eeef994498783adb5e36e6be7f2f26fd",
+  "version": "1.6.9"
 }
